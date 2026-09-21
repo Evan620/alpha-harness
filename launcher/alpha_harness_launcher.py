@@ -35,6 +35,9 @@ REPOSITORY = "residual-lab/alpha-harness"
 DOWNLOAD = f"https://github.com/{REPOSITORY}/releases/download"
 
 HOME_VARIABLE = "ALPHA_HARNESS_HOME"
+#: The exe's own version, handed to the app. The in-app update replaces the wheel and never
+#: this program, so without it the app cannot tell that the exe around it is years older.
+LAUNCHER_VARIABLE = "ALPHA_HARNESS_LAUNCHER"
 REQUEST_FILE = "update-request.json"
 ERROR_FILE = "update-error.json"
 ACTIVE_FILE = "active-slot.txt"
@@ -593,7 +596,11 @@ def start(root: Path, slot: str) -> int:
     Quit has something to close.
     """
     global _child
-    environment = os.environ | {HOME_VARIABLE: str(root), "PYTHONUTF8": "1"}
+    environment = os.environ | {
+        HOME_VARIABLE: str(root),
+        LAUNCHER_VARIABLE: BUILD_VERSION,
+        "PYTHONUTF8": "1",
+    }
     say(root, f"starting app from slot {slot}")
     with (root / LOG_FILE).open("a", encoding="utf-8") as handle:
         _child = subprocess.Popen(  # noqa: S603 - the venv this launcher built

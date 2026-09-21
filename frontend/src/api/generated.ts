@@ -4562,6 +4562,10 @@ export interface components {
             isRelease: boolean;
             /** Latest */
             latest: string | null;
+            /** Launcher */
+            launcher: string | null;
+            /** Launcheroutdated */
+            launcherOutdated: boolean;
             /** Notes */
             notes: string;
             /** Pending */
@@ -4570,6 +4574,8 @@ export interface components {
             problem: string | null;
             /** Publishedat */
             publishedAt: string | null;
+            /** Releasesurl */
+            releasesUrl: string;
             /** Url */
             url: string;
         };

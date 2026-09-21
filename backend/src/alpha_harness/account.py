@@ -18,6 +18,7 @@ import structlog
 from sqlalchemy import select
 
 from .brain.auth import Authenticator, SessionInfo
+from .brain.endpoints import SIMULATION_TYPES
 from .brain.errors import BrainError
 from .db.models import BrainSessionRow, Credential, MetadataCache, utcnow
 from .sealing import SealError
@@ -295,6 +296,15 @@ class AuthService:
 #: How long BRAIN's settings schema is trusted before it is read again.
 SCHEMA_MAX_AGE = timedelta(hours=1)
 
+#: The cached schema is keyed by what produced it, not just by what it is.
+#:
+#: It is a *merge* of the per-type trees this build knows about, so a build that merges a
+#: different set must not read a row written by one that merged another. Without this, an
+#: update that adds a simulation type goes unnoticed for up to :data:`SCHEMA_MAX_AGE` — the
+#: new markets simply do not appear, and the release looks broken. Measured on the release
+#: that added region-agnostic simulations.
+SCHEMA_KEY = f"settings_schema:{'+'.join(SIMULATION_TYPES)}"
+
 
 class PlatformMetadata:
     """The account's operators and BRAIN's settings schema, cached in SQLite."""
@@ -311,7 +321,7 @@ class PlatformMetadata:
         the account's permissions.
         """
         schema = await self.endpoints.settings_schema()
-        await self._cache("settings_schema", schema)
+        await self._cache(SCHEMA_KEY, schema)
         return schema
 
     async def cached_settings_schema(self) -> dict[str, Any] | None:
@@ -319,9 +329,11 @@ class PlatformMetadata:
 
         Refreshing only at sign-in left a restored session offering universes BRAIN had
         withdrawn. A failed refresh keeps the old copy, still right for almost every setting.
+        A build that merges a different set of simulation types finds no copy at all, by
+        :data:`SCHEMA_KEY`, and reads a fresh one.
         """
         async with self.db.session() as session:
-            row = await session.get(MetadataCache, "settings_schema")
+            row = await session.get(MetadataCache, SCHEMA_KEY)
             cached, fetched = (row.value, row.fetched_at) if row else (None, None)
         if fetched is not None and fetched.tzinfo is None:
             fetched = fetched.replace(tzinfo=UTC)

@@ -4,7 +4,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { DownloadIcon } from 'lucide-react'
+import { DownloadIcon, LoaderCircleIcon, TriangleAlertIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { update } from '@/api/core'
@@ -85,13 +85,85 @@ function useUpdateStatus() {
  * looking. `Alpha` says what the dates do not: nothing here is settled yet.
  */
 export function VersionBadge() {
+  const queryClient = useQueryClient()
   const status = useUpdateStatus()
+  const [rechecking, setRechecking] = useState(false)
   const current = status.data?.current
+  // A check that could not reach GitHub leaves `problem` set and `available` false, so the
+  // Update button never appears. Without this the app looks up to date when it simply does
+  // not know — the one state it must not present as the other.
+  const problem = status.data?.problem ?? (status.isError ? errorMessage(status.error) : null)
+
+  const recheck = async () => {
+    setRechecking(true)
+    try {
+      queryClient.setQueryData(['update'], await update.status(true))
+    } catch (error) {
+      toast.error(errorMessage(error))
+    } finally {
+      setRechecking(false)
+    }
+  }
+
   return (
     <span className="hidden items-center gap-1.5 text-body-compact text-ink-subtle sm:flex">
       <span className="rounded-xs border border-hairline px-1.5 py-px text-caption">Alpha</span>
       <span className="num">{status.data?.isRelease ? current : 'dev'}</span>
+      {problem && (
+        <button
+          type="button"
+          onClick={recheck}
+          disabled={rechecking}
+          title={`${problem}\n\nClick to check again.`}
+          aria-label={`Could not check for updates: ${problem}. Check again.`}
+          className="inline-flex items-center rounded-xs text-status-warning transition-colors hover:text-ink disabled:text-ink-disabled"
+        >
+          {rechecking ? (
+            <LoaderCircleIcon className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <TriangleAlertIcon className="size-3.5" aria-hidden />
+          )}
+        </button>
+      )}
     </span>
+  )
+}
+
+/** The one thing the in-app updater cannot fix for you. */
+function LauncherNotice({ version, url }: { version: string | null; url: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+        <TriangleAlertIcon aria-hidden />
+        Update AlphaHarness.exe
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="A newer AlphaHarness.exe is out"
+        description={version ? `Yours is ${version}.` : 'Yours is from before they were dated.'}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Not now
+            </Button>
+            <Button
+              variant="primary"
+              render={<a href={url} target="_blank" rel="noopener noreferrer" />}
+            >
+              Open the release
+            </Button>
+          </>
+        }
+      >
+        <p className="text-body-compact text-ink-subtle">
+          Alpha Harness updates itself, but it cannot replace the program that starts it. Download{' '}
+          <span className="num">AlphaHarness.exe</span> from the release, put it where the old one
+          is, and run it. Nothing you have is lost — your data, alphas and sign-in all stay.
+        </p>
+      </Dialog>
+    </>
   )
 }
 
@@ -116,6 +188,11 @@ export function UpdateBadge() {
 
   const data = status.data
   if (installing !== null) return <Installing version={installing} />
+  // An update installs the wheel and never AlphaHarness.exe, so a launcher change — the
+  // system tray, say — reaches nobody until they fetch the exe themselves. Nothing else in
+  // the app can say so: from inside, an out-of-date launcher looks exactly like a current one.
+  if (data?.launcherOutdated)
+    return <LauncherNotice version={data.launcher} url={data.url || data.releasesUrl} />
   if (!data?.available) return null
 
   return (

@@ -182,8 +182,11 @@ jobs:
         run: |
           # Semicolon: PyInstaller splits SOURCE from DEST on os.pathsep, and this runs on
           # Windows however bash-shaped the step looks.
+          # --icon: the tray reads the running exe's own icon, so this is what puts our
+          # mark in the notification area rather than Windows' generic one.
           pyinstaller --onefile --windowed --name AlphaHarness \
             --add-binary "launcher/uv.exe;." \
+            --icon launcher/mark.ico \
             --distpath dist \
             launcher/alpha_harness_launcher.py
 

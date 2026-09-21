@@ -74,14 +74,16 @@ class StayAwake:
                 )
                 self.state = "held" if ok else "unavailable"
                 return
+            # Narrowed in the positive branch, not by an early return on None: this is
+            # unreachable on Windows, where pyrefly stops refining and reads the declared type.
             cmd = _command()
             if cmd is None:
                 self.state = "unavailable"
-                return
-            self._proc = subprocess.Popen(  # noqa: S603 - fixed argv, no user input
-                cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            self.state = "held"
+            else:
+                self._proc = subprocess.Popen(  # noqa: S603 - fixed argv, no user input
+                    cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                self.state = "held"
         except Exception:
             log.warning("awake.hold_failed", exc_info=True)
             self.state = "unavailable"

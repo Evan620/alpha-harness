@@ -36,9 +36,21 @@ log = structlog.get_logger(__name__)
 PACKAGE = "alpha-harness"
 REPOSITORY = "residual-lab/alpha-harness"
 RELEASES_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+#: Where a person goes to fetch a release by hand, when the app cannot do it for them.
+RELEASES_PAGE = f"https://github.com/{REPOSITORY}/releases/latest"
 
 #: Set by the launcher to the directory it owns: ``uv.exe``, the Python it fetched, the venv.
 HOME_VARIABLE = "ALPHA_HARNESS_HOME"
+#: Set by the launcher to its own version. Absent when the app was started another way, and
+#: on any exe built before this variable existed.
+LAUNCHER_VARIABLE = "ALPHA_HARNESS_LAUNCHER"
+
+#: The oldest ``AlphaHarness.exe`` this release works fully with.
+#:
+#: Raised by hand, and only when a launcher change actually matters — the exe is rebuilt every
+#: release, so comparing it to the wheel would nag after every update for nothing. The system
+#: tray arrived in this one, and an older exe simply has no tray.
+LAUNCHER_NEEDED = "2026.9.21.1"
 #: Read by the launcher once the app has exited, then deleted.
 REQUEST_FILE = "update-request.json"
 #: Written by the launcher when an install failed, so the app can say why rather than offer
@@ -89,6 +101,23 @@ def is_release() -> bool:
     """Whether this is a published build rather than a development tree."""
     parsed = _parse(current())
     return parsed is not None and not parsed.is_devrelease
+
+
+def launcher_version() -> str | None:
+    """Which ``AlphaHarness.exe`` started this app, when one did and it says so."""
+    return os.environ.get(LAUNCHER_VARIABLE) or None
+
+
+def launcher_outdated() -> bool:
+    """Whether the exe around this app is older than this release needs.
+
+    An exe that does not name itself predates :data:`LAUNCHER_VARIABLE`, so it is older than
+    anything that could have set it. An app started without a launcher has none to update.
+    """
+    if launcher_home() is None:
+        return False
+    running = launcher_version()
+    return running is None or is_newer(LAUNCHER_NEEDED, running)
 
 
 def launcher_home() -> Path | None:

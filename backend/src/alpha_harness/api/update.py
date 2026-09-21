@@ -40,6 +40,13 @@ class UpdateStatus(Out):
     published_at: str | None
     #: Why the check could not be made, said plainly. Null when it worked.
     problem: str | None
+    #: The ``AlphaHarness.exe`` that started this app, when one did.
+    launcher: str | None
+    #: True when that exe is older than this release needs. An update installs the wheel and
+    #: never the exe, so a launcher change reaches nobody until they download it themselves.
+    launcher_outdated: bool
+    #: Where to fetch a release by hand. Always set, even when GitHub could not be read.
+    releases_url: str
 
 
 class UpdateStarted(Out):
@@ -65,6 +72,9 @@ async def status(refresh: bool = False) -> UpdateStatus:
         ),
         can_install=updates.launcher_home() is not None,
         pending=updates.pending(),
+        launcher=updates.launcher_version(),
+        launcher_outdated=updates.launcher_outdated(),
+        releases_url=updates.RELEASES_PAGE,
         notes=release.notes if release else "",
         url=release.url if release else "",
         published_at=release.published_at if release else None,
