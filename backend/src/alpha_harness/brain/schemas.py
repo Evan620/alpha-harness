@@ -232,16 +232,17 @@ class Check(BrainModel):
     """One entry of the submission-check array.
 
     ``limit`` and ``value`` are usually a threshold and the figure measured against it, but
-    not always: ``HT_ORTHOGONAL_RAM_NEUTRALIZATION`` puts *neutralization names* in both
-    (*"Neutralization of RAM matches Orthogonal High Turnover neutralization of RAM"*). Typed
-    numeric, one such check aborted the whole listing page it arrived on, so both accept
-    either and readers test before they compute.
+    that is a convention, not a contract. ``HT_ORTHOGONAL_RAM_NEUTRALIZATION`` puts
+    *neutralization names* in both; ``HT_INVESTABLE_...`` puts a *list* of pool names in
+    ``value``. Each new shape aborted the whole listing page it arrived on — the alphas are
+    validated a page at a time, so one unknown check costs every alpha beside it. Untyped is
+    the only width that cannot be outgrown again; readers test before they compute.
     """
 
     name: str
     result: CheckResult | None = None
-    limit: float | str | None = None
-    value: float | str | None = None
+    limit: Any = None
+    value: Any = None
     # MATCHES_COMPETITION carries arrays instead of a numeric value.
     matched: list[Any] | None = None
     unmatched: list[Any] | None = None
