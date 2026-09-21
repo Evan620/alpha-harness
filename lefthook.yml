@@ -89,7 +89,7 @@ build:
     # The wheel carries no lock; consultants install with `uvx -c dist/constraints.txt`.
     - name: constraints
       root: backend/
-      run: uv export --frozen --no-dev --no-emit-project --no-hashes -o dist/constraints.txt
+      run: uv export --frozen --no-dev --no-emit-project -o dist/constraints.txt
 
 # Full gate: check -> build, each stage running both halves in parallel.
 gate:

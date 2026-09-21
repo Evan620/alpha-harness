@@ -74,6 +74,16 @@ def say(root: Path, message: str) -> None:
         handle.write(f"{stamp} {message}\n")
 
 
+def recent(root: Path, lines: int = 8) -> str:
+    """The tail of the log, for a message box. A traceback's last lines carry the reason."""
+    try:
+        return "\n".join(
+            (root / LOG_FILE).read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+        )
+    except OSError as exc:
+        return f"(the log could not be read: {exc})"
+
+
 def fail(root: Path, message: str) -> None:
     """Report a failure the user can act on. Windowed processes have nowhere else to speak."""
     say(root, f"FATAL {message}")
@@ -589,6 +599,120 @@ class Tray:
         self.stop()
 
 
+#: Terminate everything in the job once the last handle to it closes. Windows closes ours
+#: however this process ends — including a kill that runs no code here, which is the point.
+_JOB_KILL_ON_CLOSE = 0x2000
+_JOB_EXTENDED_LIMITS = 9
+_PROCESS_SET_QUOTA, _PROCESS_TERMINATE = 0x0100, 0x0001
+
+#: The job the app runs inside, and the library used to put it there. Created once, and the
+#: handle is deliberately never closed: closing it is what kills the app.
+_job: int | None = None
+_kernel: Any = None
+
+
+def guard_children(root: Path) -> None:
+    """Arrange for the app to die with this launcher, however this launcher dies.
+
+    ``start`` waits on the app, so a launcher that is *closed* stops it. A launcher that is
+    *killed* — Task Manager, ``taskkill /F``, a crash — never returns from that wait, and the
+    app keeps running with no icon and no window. It then holds DuckDB's single-writer lock
+    and port 8000 against every later start, which fails with nothing on screen to explain it.
+
+    A job object moves that guarantee into the kernel, where no code of ours has to run.
+    Only the app is put in it; the browser is spawned by the shell rather than by us, so
+    quitting Alpha Harness never closes the page the user was reading.
+    """
+    global _job, _kernel
+    if sys.platform != "win32":
+        return
+
+    from ctypes import wintypes
+
+    class BasicLimits(ctypes.Structure):
+        """``JOBOBJECT_BASIC_LIMIT_INFORMATION``. Only ``LimitFlags`` is set, but every field
+        has to be here: the call is handed a size and reads flags at a fixed offset."""
+
+        _fields_ = (
+            ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        )
+
+    class IoCounters(ctypes.Structure):
+        _fields_ = tuple(
+            (name, ctypes.c_uint64)
+            for name in ("ReadOps", "WriteOps", "OtherOps", "ReadBytes", "WriteBytes", "OtherBytes")
+        )
+
+    class ExtendedLimits(ctypes.Structure):
+        _fields_ = (
+            ("BasicLimitInformation", BasicLimits),
+            ("IoInfo", IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryLimit", ctypes.c_size_t),
+            ("PeakJobMemoryLimit", ctypes.c_size_t),
+        )
+
+    # A fresh WinDLL for the same reason the tray keeps one: ``ctypes.windll`` is cached
+    # process-wide, and declaring argtypes on it would change calls made anywhere else.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    prototypes = (
+        ("CreateJobObjectW", wintypes.HANDLE, [ctypes.c_void_p, wintypes.LPCWSTR]),
+        (
+            "SetInformationJobObject",
+            wintypes.BOOL,
+            [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD],
+        ),
+        ("AssignProcessToJobObject", wintypes.BOOL, [wintypes.HANDLE, wintypes.HANDLE]),
+        ("OpenProcess", wintypes.HANDLE, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]),
+        ("CloseHandle", wintypes.BOOL, [wintypes.HANDLE]),
+    )
+    # Undeclared, ctypes passes every argument as a C ``int`` and truncates a 64-bit handle
+    # to its low half, which fails in a way that looks like the call simply not working.
+    for name, restype, argtypes in prototypes:
+        function = getattr(kernel32, name)
+        function.restype = restype
+        function.argtypes = argtypes
+
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        say(root, f"could not create the job object: {ctypes.get_last_error()}")
+        return
+    limits = ExtendedLimits()
+    limits.BasicLimitInformation.LimitFlags = _JOB_KILL_ON_CLOSE
+    if not kernel32.SetInformationJobObject(
+        job, _JOB_EXTENDED_LIMITS, ctypes.byref(limits), ctypes.sizeof(limits)
+    ):
+        say(root, f"could not set job limits: {ctypes.get_last_error()}")
+        kernel32.CloseHandle(job)
+        return
+    _job, _kernel = job, kernel32
+
+
+def adopt(root: Path, pid: int) -> None:
+    """Put a started app into the job, so it cannot outlive this launcher."""
+    if _job is None or _kernel is None:
+        return
+    # The two rights ``AssignProcessToJobObject`` requires, and nothing more.
+    handle = _kernel.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
+    if not handle:
+        say(root, f"could not open the app to guard it: {ctypes.get_last_error()}")
+        return
+    try:
+        if not _kernel.AssignProcessToJobObject(_job, handle):
+            say(root, f"could not guard the app: {ctypes.get_last_error()}")
+    finally:
+        _kernel.CloseHandle(handle)
+
+
 def start(root: Path, slot: str) -> int:
     """Run the app to completion, with its output in the log. Returns its exit code.
 
@@ -610,6 +734,7 @@ def start(root: Path, slot: str) -> int:
             env=environment,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+        adopt(root, _child.pid)
         try:
             code = _child.wait()
         finally:
@@ -642,6 +767,7 @@ def main() -> int:
         fail(root, f"Could not unpack uv: {exc}")
         return 1
 
+    guard_children(root)
     tray = Tray(root)
     tray.start()
     try:
@@ -703,6 +829,14 @@ def supervise(root: Path, uv: Path) -> int:
             continue
 
         if requested(root) is None:
+            # Nothing else can report this. The app died before it could serve a page, and
+            # the launcher is about to exit too, so without a box here the whole of what the
+            # user sees is a double-click that does nothing — four times over, in our case.
+            if code != 0:
+                fail(
+                    root,
+                    f"Alpha Harness stopped unexpectedly (exit code {code}).\n\n{recent(root)}",
+                )
             return code
         say(root, "update requested; restarting")
 
