@@ -627,30 +627,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/competitions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Live
-         * @description Every competition still running, with this account's enrolment folded in.
-         *
-         *     Two reads, because neither answers alone: the open list says what is running, and only
-         *     ``/users/self/competitions`` carries the enrolment and the account's own board row. A
-         *     competition the user is in wins, so its richer row is the one shown.
-         */
-        get: operations["live_api_competitions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/evolution-lab/options": {
         parameters: {
             query?: never;
@@ -1218,6 +1194,30 @@ export interface paths {
         put?: never;
         /** Add Task */
         post: operations["add_task_api_power_pool_lab_tasks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/quarter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Standing
+         * @description Submitted Alphas and formulated pyramids for the quarter in progress.
+         *
+         *     Two reads, run together. Neither is derivable from the other: an Alpha belongs to as
+         *     many pyramids as it has data categories, so the pyramid counts sum to more than the
+         *     number of Alphas and cannot stand in for it.
+         */
+        get: operations["standing_api_quarter_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2476,43 +2476,6 @@ export interface components {
             /** Updatedat */
             updatedAt: string | null;
         };
-        /** Competition */
-        Competition: {
-            /** Daysleft */
-            daysLeft: number | null;
-            /** Description */
-            description: string | null;
-            /** Enddate */
-            endDate: string | null;
-            /** Enrolled */
-            enrolled: boolean;
-            /** Faq */
-            faq: string | null;
-            /** Id */
-            id: string;
-            /** Name */
-            name: string;
-            /** Scoring */
-            scoring: string | null;
-            /** Signupdaysleft */
-            signUpDaysLeft: number | null;
-            /** Signupenddate */
-            signUpEndDate: string | null;
-            standing: components["schemas"]["Standing"] | null;
-            /** Startdate */
-            startDate: string | null;
-            /** Status */
-            status: string | null;
-            /** Teambased */
-            teamBased: boolean;
-        };
-        /** Competitions */
-        Competitions: {
-            /** Competitions */
-            competitions: components["schemas"]["Competition"][];
-            /** Regionagnostic */
-            regionAgnostic: boolean;
-        };
         /** ContextCounts */
         ContextCounts: {
             /** Categories */
@@ -2545,6 +2508,10 @@ export interface components {
             coverage: number | null;
             /** Dataset Id */
             dataset_id: string | null;
+            /** Date Coverage */
+            date_coverage: number | null;
+            /** Date Created */
+            date_created: string | null;
             /** Delay */
             delay: number;
             /** Description */
@@ -2584,6 +2551,10 @@ export interface components {
             coverage: number | null;
             /** Dataset Id */
             dataset_id: string | null;
+            /** Date Coverage */
+            date_coverage: number | null;
+            /** Date Created */
+            date_created: string | null;
             /** Description */
             description: string | null;
             /** Field Id */
@@ -2842,6 +2813,11 @@ export interface components {
             pyramid_multiplier_min?: number | null;
             /** Search */
             search?: string | null;
+            /**
+             * Search Mode
+             * @default smart
+             */
+            search_mode: string;
             /**
              * Sort By
              * @default alpha_count
@@ -3727,6 +3703,23 @@ export interface components {
             /** Today */
             today: string;
         };
+        /** QuarterStanding */
+        QuarterStanding: {
+            /** Alphasperpyramid */
+            alphasPerPyramid: number;
+            /** End */
+            end: string;
+            /** Label */
+            label: string;
+            /** Pyramidsformulated */
+            pyramidsFormulated: number;
+            /** Pyramidsstarted */
+            pyramidsStarted: number;
+            /** Start */
+            start: string;
+            /** Submitted */
+            submitted: number;
+        };
         /**
          * QuickRequest
          * @description The market to run in, and the datasets last chosen there; none means the pyramids.
@@ -4185,22 +4178,6 @@ export interface components {
             truncation: number | null;
             /** Universe */
             universe: string | null;
-        };
-        /**
-         * Standing
-         * @description This account's own row on the board. Absent until the first Alpha is scored.
-         */
-        Standing: {
-            /** Alphas */
-            alphas: number | null;
-            /** Country */
-            country: string | null;
-            /** Rank */
-            rank: number | null;
-            /** Robustnessscore */
-            robustnessScore: number | null;
-            /** University */
-            university: string | null;
         };
         /**
          * StudyStatus
@@ -5736,26 +5713,6 @@ export interface operations {
             };
         };
     };
-    live_api_competitions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Competitions"];
-                };
-            };
-        };
-    };
     options_api_evolution_lab_options_get: {
         parameters: {
             query?: {
@@ -6608,6 +6565,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    standing_api_quarter_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuarterStanding"];
                 };
             };
         };

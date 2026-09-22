@@ -7,7 +7,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
 import { type ReactNode, useRef } from 'react'
 import { cn } from '@/lib/cn'
-import { fmt } from '@/lib/format'
+import { DASH, fmt } from '@/lib/format'
 import { Button, Empty, ErrorNotice, Skeleton } from './kit'
 
 export interface Column<T> {
@@ -57,7 +57,8 @@ export function DataTable<T>({
   /** A failed query: shown in place of the empty state, which would claim there is nothing. */
   error?: unknown
   empty?: ReactNode
-  maxHeight?: string
+  /** Explicitly `undefined` keeps the default, so a caller can size it only sometimes. */
+  maxHeight?: string | undefined
   rowHeight?: number
   label: string
 }) {
@@ -87,16 +88,16 @@ export function DataTable<T>({
         {selectable && <div role="columnheader" aria-label="Select" />}
         {columns.map((column) => {
           const active = sort?.key === column.key
+          const Arrow = sort?.desc ? ArrowDownIcon : ArrowUpIcon
           const content = (
-            <>
-              <span className="truncate">{column.header}</span>
-              {active &&
-                (sort.desc ? (
-                  <ArrowDownIcon className="size-3 shrink-0 text-primary" />
-                ) : (
-                  <ArrowUpIcon className="size-3 shrink-0 text-primary" />
-                ))}
-            </>
+            // Headers wrap rather than clip: a long name would otherwise widen its track until
+            // the whole table needed a horizontal scrollbar to show short values. The sort arrow
+            // sits *inside* the text, so it wraps with the last word instead of being a rigid
+            // sibling that collides with it in a narrow column.
+            <span className={cn('min-w-0 text-balance', column.align === 'right' && 'text-right')}>
+              {column.header}
+              {active && <Arrow className="ml-1 inline size-3 align-text-bottom text-primary" />}
+            </span>
           )
           return (
             <div
@@ -104,7 +105,10 @@ export function DataTable<T>({
               role="columnheader"
               aria-sort={active ? (sort.desc ? 'descending' : 'ascending') : undefined}
               className={cn(
-                'flex h-8 items-center px-3 text-caption font-medium uppercase tracking-wide text-ink-subtle',
+                // min-w-0: a grid item defaults to min-width:auto, which lets a long header
+                // push past its own track instead of wrapping inside it. Bottom-aligned so a
+                // header that took two lines still sits on the row's baseline.
+                'flex min-h-8 min-w-0 items-end px-3 pt-1.5 pb-1.5 text-caption font-medium uppercase leading-tight tracking-wide text-ink-subtle',
                 column.align === 'right' && 'justify-end',
               )}
             >
@@ -112,7 +116,7 @@ export function DataTable<T>({
                 <button
                   type="button"
                   className={cn(
-                    'inline-flex items-center gap-1 transition-colors hover:text-ink',
+                    'inline-flex min-w-0 items-end transition-colors hover:text-ink',
                     active && 'text-ink',
                   )}
                   onClick={() => onSort({ key: column.key, desc: active ? !sort.desc : true })}
@@ -220,7 +224,12 @@ export function DataTable<T>({
                       >
                         {/* A flex box clips without an ellipsis; plain text gets a block that truncates. */}
                         {typeof content === 'string' || typeof content === 'number' ? (
-                          <span className="truncate">{content}</span>
+                          <span
+                            className="truncate"
+                            title={content === DASH ? undefined : String(content)}
+                          >
+                            {content}
+                          </span>
                         ) : (
                           content
                         )}

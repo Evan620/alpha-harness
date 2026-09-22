@@ -11,6 +11,7 @@ import type { Scope } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { useScope } from '@/lib/scope'
+import { useFieldFilter } from '@/screens/data/state'
 import { Empty, ErrorNotice, Page, PageHeader, Panel, Skeleton } from '@/ui/kit'
 import { RegionAgnosticHero, SyncHero } from './sync-matrix'
 
@@ -92,8 +93,29 @@ function Legend() {
         <span className={cn(SWATCH, 'border-2 border-ink')} />
         best in both
       </span>
+      <span>click a cell to browse that pyramid&rsquo;s Data Fields</span>
     </div>
   )
+}
+
+/**
+ * The universe to open a market in: the one already downloaded, richest first. BRAIN's own
+ * map hardcodes a universe per region; reading it off the catalog instead means the market
+ * that opens is one the Data Explorer can actually show.
+ */
+function useSyncedUniverses() {
+  const scopes = useQuery({ queryKey: ['catalog', 'scopes'], queryFn: catalog.scopes })
+  return useMemo(() => {
+    const best = new Map<string, { universe: string; instrumentType: string; fields: number }>()
+    for (const s of scopes.data ?? []) {
+      const id = `${s.region}-${s.delay}`
+      const held = best.get(id)
+      if (!held || s.fields > held.fields) {
+        best.set(id, { universe: s.universe, instrumentType: s.instrument_type, fields: s.fields })
+      }
+    }
+    return best
+  }, [scopes.data])
 }
 
 export function PyramidsScreen() {
@@ -132,6 +154,17 @@ export function PyramidsScreen() {
   const open = (change: Partial<Scope>) => {
     update(change)
     void navigate({ to: '/data/$tab', params: { tab: 'fields' } })
+  }
+  const universes = useSyncedUniverses()
+
+  /** A cell is a way in: open its market and narrow the Fields tab to just that category. */
+  const openPyramid = (categoryId: string, region: string, delay: number) => {
+    const market = universes.get(`${region}-${delay}`)
+    if (!market) return
+    // Replace rather than merge: a category carried in beside a stale dataset or coverage
+    // filter lands the user on an empty table and no clue which filter emptied it.
+    useFieldFilter.getState().replace({ category_ids: [categoryId] })
+    open({ region, delay, universe: market.universe, instrumentType: market.instrumentType })
   }
 
   return (
@@ -211,26 +244,45 @@ export function PyramidsScreen() {
                           topOfRow && 'best market for this category',
                           topOfColumn && 'best category in this market',
                         ].filter(Boolean)
+                        const reading = `${category.name} · ${column.region} D${column.delay} · Pyramid Multiplier ${times(cell.multiplier)} · ${fmt.int(cell.alphaCount)} of your Alphas this quarter${notes.length ? ` · ${notes.join(' · ')}` : ''}`
+                        // Openable only where this category's Fields are downloaded for the
+                        // market: the Data Explorer reads the local catalog, so a cell BRAIN
+                        // pays for is still a dead end until the market is synced.
+                        const openable = cell.synced && universes.has(id)
+                        const face = cn(
+                          'num flex h-8 w-full items-center justify-center rounded-sm border whitespace-nowrap text-ink',
+                          tint(cell.multiplier),
+                          // Each mark runs along the axis it belongs to: horizontal rules
+                          // frame the row, vertical rules frame the column, and all four
+                          // enclose a cell that leads both.
+                          topOfRow
+                            ? 'border-t-2 border-b-2 border-t-ink border-b-ink'
+                            : 'border-t-hairline-strong border-b-hairline-strong',
+                          topOfColumn
+                            ? 'border-l-2 border-r-2 border-l-ink border-r-ink'
+                            : 'border-l-hairline-strong border-r-hairline-strong',
+                        )
                         return (
                           <td key={id}>
-                            <span
-                              title={`${category.name} · ${column.region} D${column.delay} · Pyramid Multiplier ${times(cell.multiplier)} · ${fmt.int(cell.alphaCount)} of your Alphas this quarter${notes.length ? ` · ${notes.join(' · ')}` : ''}`}
-                              className={cn(
-                                'num flex h-8 items-center justify-center rounded-sm border whitespace-nowrap text-ink',
-                                tint(cell.multiplier),
-                                // Each mark runs along the axis it belongs to: horizontal rules
-                                // frame the row, vertical rules frame the column, and all four
-                                // enclose a cell that leads both.
-                                topOfRow
-                                  ? 'border-t-2 border-b-2 border-t-ink border-b-ink'
-                                  : 'border-t-hairline-strong border-b-hairline-strong',
-                                topOfColumn
-                                  ? 'border-l-2 border-r-2 border-l-ink border-r-ink'
-                                  : 'border-l-hairline-strong border-r-hairline-strong',
-                              )}
-                            >
-                              {times(cell.multiplier)}
-                            </span>
+                            {openable ? (
+                              <button
+                                type="button"
+                                title={`${reading} · open these Data Fields`}
+                                className={cn(face, 'cursor-pointer hover:brightness-115')}
+                                onClick={() =>
+                                  openPyramid(category.id, column.region, column.delay)
+                                }
+                              >
+                                {times(cell.multiplier)}
+                              </button>
+                            ) : (
+                              <span
+                                title={`${reading} · not downloaded, sync this market to browse its Data Fields`}
+                                className={face}
+                              >
+                                {times(cell.multiplier)}
+                              </span>
+                            )}
                           </td>
                         )
                       })}

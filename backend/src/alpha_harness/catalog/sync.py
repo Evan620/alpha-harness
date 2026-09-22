@@ -27,6 +27,7 @@ from ..brain.errors import BrainError
 from ..brain.schemas import REGION_AGNOSTIC_REGION, BulkField, FieldRef
 from ..db.duck import CatalogUnusableError
 from ..db.models import SyncRun, SyncStatus, utcnow
+from . import search
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -492,6 +493,12 @@ class CatalogSync:
         except Exception:
             log.warning("sync_all.compact_failed", run_id=run_id, exc_info=True)
 
+        # New fields are unsearchable until they are indexed, and the index is cheap.
+        try:
+            await search.rebuild(self.catalog)
+        except Exception:
+            log.warning("sync_all.search_index_failed", run_id=run_id, exc_info=True)
+
         status = SyncStatus.COMPLETE if synced else SyncStatus.FAILED
         await self._finish(run_id, status, error=_failures(progress))
         log.info("sync_all.done", run_id=run_id, scopes=len(synced), failed=len(progress["failed"]))
@@ -646,10 +653,12 @@ def _field_rows(raw: list[BulkField], target: SyncTarget, now: datetime) -> list
             item.description,
             item.type,
             item.coverage,
+            item.date_coverage,
             item.user_count,
             item.alpha_count,
             item.pyramid_multiplier,
             json.dumps(item.themes) if item.themes else None,
+            item.date_created,
             item.region_coverage,
             instrument,
             region,

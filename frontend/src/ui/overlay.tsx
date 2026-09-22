@@ -8,7 +8,7 @@ import { Menu as BMenu } from '@base-ui/react/menu'
 import { Select as BSelect } from '@base-ui/react/select'
 import { Tooltip as BTooltip } from '@base-ui/react/tooltip'
 import { CheckIcon, ChevronDownIcon, XIcon } from 'lucide-react'
-import type { ReactElement, ReactNode } from 'react'
+import type { ReactElement, ReactNode, RefObject } from 'react'
 import { cn } from '@/lib/cn'
 import { Button } from './kit'
 
@@ -20,6 +20,12 @@ interface DialogProps {
   children?: ReactNode
   footer?: ReactNode
   className?: string
+  /**
+   * Where to portal to. Needed only inside an element in fullscreen: the browser renders
+   * that element and its descendants and nothing else, so a popup left on `<body>` is
+   * simply not drawn.
+   */
+  container?: RefObject<HTMLElement | null> | undefined
 }
 
 function Frame({
@@ -72,10 +78,10 @@ export function Dialog({ open, onOpenChange, className, ...frame }: DialogProps)
 }
 
 /** A right-hand detail panel. */
-export function Sheet({ open, onOpenChange, className, ...frame }: DialogProps) {
+export function Sheet({ open, onOpenChange, className, container, ...frame }: DialogProps) {
   return (
     <BDialog.Root open={open} onOpenChange={(next) => onOpenChange(next)}>
-      <BDialog.Portal>
+      <BDialog.Portal container={container}>
         <BDialog.Backdrop className="fixed inset-0 z-50 bg-black/50" />
         <BDialog.Popup
           className={cn(

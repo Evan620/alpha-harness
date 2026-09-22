@@ -39,11 +39,42 @@ ChangeHook = Callable[[list[dict[str, Any]]], Awaitable[None] | None]
 #: for capacity it has already given away.
 RA_CHILDREN = 4
 
-#: What one row costs, in concurrent cores and in simulations off the day's allowance. BRAIN
-#: charges a region-agnostic row per region it is translated into rather than per request
-#: (``docs/learn/advanced-topics/region-agnostic-alpha``, "Quota Management").
+#: What one row costs off the day's allowance. BRAIN charges a region-agnostic row per
+#: region it is translated into rather than per request
+#: (``docs/learn/advanced-topics/region-agnostic-alpha``, "Quota Management"). GLB is *not*
+#: doubled here: its rule is about concurrency, not the allowance — see :data:`SLOT_COST`.
 SIMULATION_COST = case(
     (SimulationRecord.sim_type == SimulationType.REGION_AGNOSTIC, RA_CHILDREN), else_=1
+)
+
+#: The region BRAIN meters at double rate.
+GLB_REGION = "GLB"
+#: Concurrent slots one GLB simulation holds. "4 concurrent simulations for GLB Alphas (each
+#: simulation now takes 2 slots out of the available 8 slots)" — ``docs/ANNOUNCEMENTS.md``,
+#: 2025-09-23. A multi-simulation is one simulation to BRAIN, so a GLB batch holds two slots
+#: however many children it carries.
+GLB_SLOTS = 2
+
+#: Concurrent cores a region-agnostic simulation holds: "the sum of RA Child Alphas'
+#: concurrent quota" (``docs/learn/advanced-topics/region-agnostic-alpha``, "Quota
+#: Management"). So it is not one number — it is however many regions the expression's
+#: fields intersect, with GLB counting twice. Measured over this account's own RA Alphas:
+#: ten cost three (USA, EUR, ASI), two cost two, one cost five because it reached GLB.
+#:
+#: Three is the typical figure rather than the worst case, so two run at once. Guessing low
+#: is the cheap direction: going over answers ``429`` on the *post*, and a throttled
+#: simulation goes back in the queue without starting, so nothing is spent. Guessing high
+#: idles cores that are genuinely free, every time, which nothing gives back.
+RA_SLOTS = 3
+
+#: What one row costs in *concurrent cores*, which is not the same as what it costs off the
+#: day's allowance. Counting GLB as one would let the engine keep eight GLB simulations out
+#: while BRAIN allows four, so two thirds of a round would sit refused and the cores would
+#: read as fluctuating rather than full.
+SLOT_COST = case(
+    (SimulationRecord.sim_type == SimulationType.REGION_AGNOSTIC, RA_SLOTS),
+    (SimulationRecord.region == GLB_REGION, GLB_SLOTS),
+    else_=1,
 )
 
 #: Platform status -> our local lifecycle.

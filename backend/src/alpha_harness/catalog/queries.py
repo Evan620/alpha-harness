@@ -13,6 +13,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, Field
 
+from .search import MATCH, TABLE, query_terms
+from .search import ready as search_ready
+
 if TYPE_CHECKING:
     from ..db.duck import Catalog
 
@@ -22,11 +25,30 @@ SORTABLE = {
     "dataset_id",
     "category_id",
     "coverage",
+    "date_coverage",
+    "date_created",
     "user_count",
     "alpha_count",
     "pyramid_multiplier",
     "field_type",
 }
+
+#: Ordering by how well a row answers the search, which is not a column on the table.
+RELEVANCE = "relevance"
+
+#: ``data_field`` narrowed to the rows the query matches, each carrying its BM25 score.
+#: Scoring inside a subquery and filtering on the alias evaluates BM25 once; repeating
+#: ``match_bm25(...) IS NOT NULL`` in the WHERE would evaluate it again for every row.
+SCORED_SOURCE = (
+    f"data_field JOIN (SELECT field_id, score FROM "  # noqa: S608 - module constants
+    f"(SELECT field_id, {MATCH} AS score FROM {TABLE})"
+    " WHERE score IS NOT NULL) USING (field_id)"
+)
+
+#: How ``search`` is read. ``smart`` ranks whole words against the id and the description;
+#: ``text`` is the literal substring match, which is still the only way to find a fragment
+#: like ``_eps_`` in the middle of an id.
+SMART, TEXT = "smart", "text"
 
 
 class Tuple4(BaseModel):
@@ -72,24 +94,53 @@ class FieldFilter(BaseModel):
 
     has_theme: bool | None = None
 
+    #: ``smart`` (ranked words) or ``text`` (literal substring).
+    search_mode: str = SMART
+
     sort_by: str = "alpha_count"
     sort_desc: bool = True
     limit: int = 100
     offset: int = 0
 
-    def order_clause(self) -> str:
+    def terms(self) -> str | None:
+        """The search as BM25 terms, or ``None`` when it is not a ranked search at all."""
+        if not self.search or self.search_mode != SMART:
+            return None
+        return query_terms(self.search)
+
+    def order_clause(self, *, scored: bool = False) -> str:
+        if self.sort_by == RELEVANCE:
+            # Falls back to the default column when there is no score to order by, so a
+            # stale relevance sort cannot empty the ordering.
+            return "ORDER BY score DESC, field_id ASC" if scored else "ORDER BY alpha_count DESC"
         column = self.sort_by if self.sort_by in SORTABLE else "alpha_count"
         direction = "DESC" if self.sort_desc else "ASC"
         # NULLS LAST keeps unpopulated metrics from crowding the top of a descending sort.
         return f"ORDER BY {column} {direction} NULLS LAST, field_id ASC"
 
-    def where(self, scope: Tuple4) -> tuple[str, list[Any]]:
+    def where(self, scope: Tuple4, *, search: bool = True) -> tuple[str, list[Any]]:
+        """Every filter, narrowing by the search as a substring unless told not to.
+
+        ``search=False`` is for a caller that has joined :data:`SCORED_SOURCE`, which already
+        drops the rows that do not match — repeating that here would score the whole index a
+        second time for the same answer. Everyone else, including a smart search with no
+        index to rank against, still gets the substring match.
+        """
         clauses = [Tuple4.WHERE]
         params: list[Any] = list(scope.params)
 
-        if self.search:
-            needle = f"%{self.search.lower()}%"
-            clauses.append("(lower(field_id) LIKE ? OR lower(description) LIKE ?)")
+        if not search:
+            pass
+        elif self.search:
+            # `_` and `%` are LIKE wildcards, and field ids are full of underscores: without
+            # escaping, searching `_eps_` matches "steps" and "reps" too.
+            escaped = (
+                self.search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            needle = f"%{escaped}%"
+            clauses.append(
+                r"(lower(field_id) LIKE ? ESCAPE '\' OR lower(description) LIKE ? ESCAPE '\')"
+            )
             params.extend([needle, needle])
 
         for column, values in (
@@ -165,22 +216,49 @@ class CatalogQueries:
 
     # -- fields ----------------------------------------------------------
 
-    async def fields(self, scope: Tuple4, filters: FieldFilter) -> dict[str, Any]:
-        """A filtered, sorted, paginated page of fields plus the total match count."""
-        where, params = filters.where(scope)
+    async def _all_words_match(
+        self, scope: Tuple4, filters: FieldFilter, terms: str | None
+    ) -> bool:
+        """Whether requiring every word of the search still finds something.
 
-        total = await self.catalog.scalar(f"SELECT count(*) FROM data_field WHERE {where}", params)  # noqa: S608
+        `fields` learns this from the total it already computes; the facets have no such
+        total, so they ask directly — the same question, and so the same answer.
+        """
+        if not terms or " " not in terms:
+            return True
+        where, params = filters.where(scope, search=False)
+        found = await self.catalog.scalar(
+            f"SELECT 1 FROM {SCORED_SOURCE} WHERE {where} LIMIT 1",  # noqa: S608
+            [terms, 1, *params],
+        )
+        return bool(found)
+
+    async def _page(
+        self, scope: Tuple4, filters: FieldFilter, terms: str | None, *, conjunctive: bool
+    ) -> dict[str, Any]:
+        """One page of fields and the total behind it, both narrowed the same way."""
+        ranked = terms is not None
+        source = SCORED_SOURCE if ranked else "data_field"
+        head: list[Any] = [terms, int(conjunctive)] if ranked else []
+        where, params = filters.where(scope, search=not ranked)
+        scored = ranked and filters.sort_by == RELEVANCE
+
+        total = await self.catalog.scalar(
+            f"SELECT count(*) FROM {source} WHERE {where}",  # noqa: S608
+            [*head, *params],
+        )
         rows = await self.catalog.query(
             f"""
             SELECT field_id, dataset_id, category_id, category_name,
                    subcategory_id, subcategory_name, description, field_type,
-                   coverage, user_count, alpha_count, pyramid_multiplier, themes
-            FROM data_field
+                   coverage, date_coverage, user_count, alpha_count, pyramid_multiplier,
+                   themes, date_created
+            FROM {source}
             WHERE {where}
-            {filters.order_clause()}
+            {filters.order_clause(scored=scored)}
             LIMIT ? OFFSET ?
             """,  # noqa: S608
-            [*params, filters.limit, filters.offset],
+            [*head, *params, filters.limit, filters.offset],
         )
         return {
             "total": int(total or 0),
@@ -188,6 +266,22 @@ class CatalogQueries:
             "offset": filters.offset,
             "results": rows,
         }
+
+    async def fields(self, scope: Tuple4, filters: FieldFilter) -> dict[str, Any]:
+        """A filtered, sorted, paginated page of fields plus the total match count.
+
+        Where the index exists the search is answered by joining it, which narrows and ranks
+        in one pass. Requiring every word is what makes a multi-word search mean something,
+        so that is tried first; the count it produces is also the test of whether it found
+        anything, and only an empty one costs a second round with any-of-the-words.
+        """
+        terms = filters.terms()
+        if not (terms and await search_ready(self.catalog)):
+            return await self._page(scope, filters, None, conjunctive=True)
+        page = await self._page(scope, filters, terms, conjunctive=True)
+        if page["total"] == 0 and " " in terms:
+            return await self._page(scope, filters, terms, conjunctive=False)
+        return page
 
     async def field(self, scope: Tuple4, field_id: str) -> dict[str, Any] | None:
         rows = await self.catalog.query(
@@ -293,21 +387,29 @@ class CatalogQueries:
         how many VECTOR fields the rest of the filter would match.
         """
         active = filters or FieldFilter()
+        # The same matcher and the same all-of-the-words decision as the table, or a count
+        # beside a chip contradicts the rows underneath it.
+        terms = active.terms()
+        ranked = bool(terms) and await search_ready(self.catalog)
+        conjunctive = await self._all_words_match(scope, active, terms) if ranked else True
+        table = SCORED_SOURCE if ranked else "data_field"
+        head: list[Any] = [terms, int(conjunctive)] if ranked else []
 
         async def group(
             column: str, ignore: tuple[str, ...], *extra: tuple[str, str]
         ) -> list[dict[str, Any]]:
             """Distinct ``column`` values with counts, plus ``any_value`` of each extra column."""
-            where, params = active.model_copy(update={name: [] for name in ignore}).where(scope)
+            narrowed = active.model_copy(update={name: [] for name in ignore})
+            where, params = narrowed.where(scope, search=not ranked)
             select_extra = "".join(f", any_value({source}) AS {alias}" for source, alias in extra)
             return await self.catalog.query(
                 f"""
                 SELECT {column} AS id{select_extra}, count(*) AS n
-                FROM data_field
+                FROM {table}
                 WHERE {where} AND {column} IS NOT NULL
                 GROUP BY {column} ORDER BY n DESC
                 """,  # noqa: S608
-                params,
+                [*head, *params],
             )
 
         levels = ("category_ids", "subcategory_ids", "dataset_ids")

@@ -37,7 +37,7 @@ from ..db.models import DedupEntry, SimStatus, SimulationRecord, Study, TaskQuot
 from .awake import StayAwake
 from .lifecycle import (
     ACTIVE,
-    SIMULATION_COST,
+    SLOT_COST,
     ChangeHook,
     Outcome,
     SubmissionFailed,
@@ -1165,10 +1165,11 @@ class BatchEngine:
 
         Only parents and standalone simulations count — a batch's children ride in its
         single slot and must not be double-counted. A region-agnostic simulation holds four,
-        one per region it is translated into.
+        one per region it is translated into, and a GLB one holds two: BRAIN meters that
+        region at double rate, so only four GLB simulations run at once.
         """
         result = await session.execute(
-            select(SimulationRecord.task, func.sum(SIMULATION_COST))
+            select(SimulationRecord.task, func.sum(SLOT_COST))
             .where(
                 SimulationRecord.status.in_([SimStatus.PENDING, SimStatus.RUNNING]),
                 SimulationRecord.parent_record_id.is_(None),

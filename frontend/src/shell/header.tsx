@@ -11,7 +11,6 @@ import { simulations, today } from '@/api/core'
 import { cn } from '@/lib/cn'
 import { fmt } from '@/lib/format'
 import { useCores, useLive } from '@/lib/live'
-import type { CellState } from '@/lib/matrix'
 import { useRefetchOn } from '@/lib/ws'
 import { Button, STATUS } from '@/ui/kit'
 import { Tooltip } from '@/ui/overlay'
@@ -70,7 +69,8 @@ function HeaderCores() {
       <Link
         to="/matrix"
         className="flex items-center gap-1 rounded-xs transition-colors hover:bg-surface-2 focus-visible:-outline-offset-2"
-        title="Open Simulation Matrix"
+        // No `title`: each core carries its own tooltip, and the browser's native one for
+        // the link fired on top of it. The label stays for anyone not using a pointer.
         aria-label="Open Simulation Matrix"
       >
         {cores.map((core, i) => {
@@ -189,7 +189,7 @@ function Clocks() {
   const session =
     bar.data.expiresInSeconds == null ? null : Math.max(0, bar.data.expiresInSeconds - elapsed)
   // `exact` flips true once today's first simulation POST returns BRAIN's own quota headers.
-  const { remaining, exact, queued } = bar.data.simulations
+  const { remaining, exact } = bar.data.simulations
 
   return (
     // Below 1024px the two clocks hide; below 640px the quota figures drop their visible labels.
@@ -220,17 +220,6 @@ function Clocks() {
           {fmt.int(remaining)}
         </span>
       </Clock>
-      {/* Clickable, so a control rather than a status box. */}
-      <Tooltip content={<MiniMatrix />}>
-        <Button
-          size="sm"
-          render={<Link to="/matrix" />}
-          aria-label={`${fmt.int(queued)} queued. Open the Simulation Matrix`}
-        >
-          <span className="num font-medium">{fmt.int(queued)}</span>
-          <span className="max-sm:sr-only">Queued</span>
-        </Button>
-      </Tooltip>
       <Clock
         icon={<ClockIcon className="size-3.5 text-ink-subtle" aria-hidden />}
         label="Simulation Quota Reset in"
@@ -275,56 +264,4 @@ function Clock({
     </span>
   )
   return hint ? <Tooltip content={hint}>{body}</Tooltip> : body
-}
-
-const CELL: Record<CellState, string> = {
-  RUNNING: 'bg-status-running',
-  PENDING: 'bg-status-queued',
-  EMPTY: 'bg-status-idle',
-}
-
-/**
- * The 8 cores × 10-Alpha batches at a glance, on hover of "queued". Mounts only while the
- * tooltip is open, and reads the same live snapshot as the Dashboard matrix.
- */
-function MiniMatrix() {
-  const live = useLive((s) => s.simulations)
-  const active = useQuery({
-    queryKey: ['simulations', 'active'],
-    queryFn: () => simulations.active(),
-    enabled: live === null,
-  })
-  const engine = useQuery({
-    queryKey: ['simulations', 'engine'],
-    queryFn: () => simulations.engine(),
-  })
-  const slots = engine.data?.slots ?? 8
-  const maxBatch = engine.data?.maxBatch ?? 10
-  const { cores } = useCores(live ?? active.data, slots, maxBatch)
-
-  return (
-    // Small cells, so the whole 8×10 reads at a glance without covering the page.
-    <div className="flex items-stretch gap-2 p-1">
-      {/* Y-axis label, read bottom-to-top like a chart axis. */}
-      <span className="flex rotate-180 items-center justify-center text-caption font-medium tracking-wider uppercase whitespace-nowrap text-ink-subtle [writing-mode:vertical-rl]">
-        {slots} Cores
-      </span>
-      <div
-        role="img"
-        aria-label={`Simulation matrix, ${slots} cores`}
-        className="flex flex-col gap-1.5"
-      >
-        {cores.map((core, i) => (
-          <div key={i} className="flex gap-1.5">
-            {core.cells.map((cell, j) => (
-              <span
-                key={j}
-                className={cn('size-4 rounded-xs border border-hairline-subtle', CELL[cell.state])}
-              />
-            ))}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
 }

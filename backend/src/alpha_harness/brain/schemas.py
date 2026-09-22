@@ -9,7 +9,7 @@ over time and unknown ones should survive into the UI rather than be silently dr
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Self
 
@@ -436,10 +436,15 @@ class BulkField(msgspec.Struct, rename="camel"):
     description: str | None = None
     type: str | None = None
     coverage: float | None = None
+    #: The share of the history that is actually populated, as against ``coverage``, which is
+    #: the share of the instruments. A field can be complete on one and threadbare on the other.
+    date_coverage: float | None = None
     user_count: int | None = None
     alpha_count: int | None = None
     pyramid_multiplier: float | None = None
     themes: list[str] | None = None
+    #: When BRAIN first offered the field here. New fields are uncrowded by construction.
+    date_created: date | None = None
     #: How many regions hold this field. Only region ``ALL`` sends it, and it is the one
     #: local signal of whether a field can survive a region-agnostic intersection.
     region_coverage: int | None = None

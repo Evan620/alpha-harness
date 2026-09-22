@@ -40,10 +40,12 @@ CREATE TABLE IF NOT EXISTS data_field (
     description       VARCHAR,
     field_type        VARCHAR,
     coverage          DOUBLE,
+    date_coverage     DOUBLE,
     user_count        INTEGER,
     alpha_count       INTEGER,
     pyramid_multiplier DOUBLE,
     themes            VARCHAR,
+    date_created      DATE,
     instrument_type   VARCHAR NOT NULL,
     region            VARCHAR NOT NULL,
     delay             INTEGER NOT NULL,
@@ -92,6 +94,8 @@ CREATE TABLE IF NOT EXISTS data_category (
 -- Only region ALL sends it: how many regions hold the field, which is what says whether it
 -- can survive a region-agnostic simulation's intersection of regions.
 ALTER TABLE data_field ADD COLUMN IF NOT EXISTS region_coverage INTEGER;
+ALTER TABLE data_field ADD COLUMN IF NOT EXISTS date_coverage DOUBLE;
+ALTER TABLE data_field ADD COLUMN IF NOT EXISTS date_created DATE;
 
 CREATE INDEX IF NOT EXISTS ix_field_tuple
     ON data_field (instrument_type, region, delay, universe);
@@ -196,10 +200,12 @@ FIELD_COLUMNS = (
     "description",
     "field_type",
     "coverage",
+    "date_coverage",
     "user_count",
     "alpha_count",
     "pyramid_multiplier",
     "themes",
+    "date_created",
     "region_coverage",
     "instrument_type",
     "region",
@@ -324,10 +330,12 @@ ARROW_TYPES: dict[str, dict[str, pa.DataType]] = {
         "description": _STR,
         "field_type": _STR,
         "coverage": _F64,
+        "date_coverage": _F64,
         "user_count": _I32,
         "alpha_count": _I32,
         "pyramid_multiplier": _F64,
         "themes": _STR,
+        "date_created": _DATE,
         "region_coverage": _I32,
         "instrument_type": _STR,
         "region": _STR,
@@ -553,6 +561,27 @@ class CatalogLockedError(RuntimeError):
         self.detail = detail
 
 
+def _load_fts(conn: duckdb.DuckDBPyConnection) -> bool:
+    """Whether full-text search can be used at all.
+
+    DuckDB ships ``fts`` from its repository rather than statically, so the first
+    ``INSTALL`` needs a network. Loading is tried first, because once the extension is on
+    disk that is the whole job and ``INSTALL`` is a registry round trip for nothing. A
+    machine that has never had a network keeps substring search, which is worse but not
+    broken — so this reports rather than raises.
+    """
+    try:
+        conn.execute("LOAD fts")
+    except duckdb.Error:
+        try:
+            conn.execute("INSTALL fts")
+            conn.execute("LOAD fts")
+        except Exception:
+            log.info("catalog.fts_unavailable", exc_info=True)
+            return False
+    return True
+
+
 class Catalog:
     """Async facade over a DuckDB file."""
 
@@ -564,6 +593,8 @@ class Catalog:
         #: its thread, and ``close`` must wait for the thread, not the caller.
         self._reads: set[asyncio.Future[Any]] = set()
         self._closing = False
+        #: Whether full-text search is available; see :func:`_load_fts`.
+        self.fts = False
 
     async def open(self) -> None:
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -584,6 +615,14 @@ class Catalog:
         self._conn.execute(SCHEMA)
         _drop_field_key(self._conn)
         _drop_spent_indexes(self._conn)
+        self.fts = _load_fts(self._conn)
+
+    async def execute(self, sql: str, params: list[Any] | None = None) -> None:
+        """Run one statement. For DDL and small writes; bulk loads go through Arrow."""
+        await self._locked(self._execute_sync, sql, params or [])
+
+    def _execute_sync(self, sql: str, params: list[Any]) -> None:
+        self._require().execute(sql, params)
 
     async def close(self) -> None:
         """Refuse new reads, then let in-flight writes and reads finish before closing."""

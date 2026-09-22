@@ -10,7 +10,6 @@ open-ended or undocumented blobs the callers read selectively.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -45,6 +44,9 @@ V_ALPHA_LIST = "4.0"  # GET /users/{id}/alphas
 #: GET /users/self/alphas/summary. Undocumented; 4.0 returns {unsubmitted, active,
 #: decommissioned} where 2.0 returns {is, os, prod}.
 V_ALPHA_SUMMARY = "4.0"
+
+#: Daily submitted-Alpha counts, the series behind BRAIN's own "Submitted Alphas".
+SUBMISSIONS_PATH = "/users/self/activities/submissions"
 
 #: The simulation types this application sends; their per-type settings trees are merged in.
 #: Region-agnostic is included because its only region, ``ALL``, appears nowhere else — so
@@ -396,27 +398,20 @@ class BrainEndpoints:
     #: ordinary timeout allows for. BRAIN itself gives up at thirty with a 504.
     ALL_SETS_TIMEOUT = 45.0
 
-    async def list_competitions(self, *, mine: bool = False) -> list[dict[str, Any]]:
-        """Competitions that have not ended, or the ones this account is in.
+    async def submission_activity(self) -> list[tuple[str, int]]:
+        """Alphas submitted per day, as ``(date, count)`` oldest first.
 
-        ``mine`` answers from ``/users/self/competitions``, which carries the enrolment and
-        the account's own leaderboard row; the open list carries neither. Both are needed:
-        one says what is running, the other says whether you are in it.
-
-        The date filter is UTC and uses BRAIN's ``!<`` ("not less than") operator, unlike
-        the alpha filters, which are US Eastern.
+        BRAIN's own schema titles this "Submitted Alphas". The envelope's ``current`` window
+        is two months rather than a quarter, so the dated rows are what a quarterly figure
+        has to be built from.
         """
-        path, params = "/users/self/competitions", {}
-        if not mine:
-            # In ``params``, never inlined in the path: the client meters by path, so a
-            # query string carrying a timestamp would mint a fresh unmetered bucket on
-            # every call and slip past this endpoint's own measured pacing.
-            now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-            path = "/competitions"
-            params = {"limit": 50, "offset": 0, "endDate!<": now}
-        body = (await self.client.request_retrying("GET", path, params=params)).body
-        rows = body.get("results") if isinstance(body, dict) else body
-        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+        body = (await self.client.request_retrying("GET", SUBMISSIONS_PATH)).body
+        rows = ((body or {}).get("records") or {}).get("records") or []
+        return [
+            (str(r[0]), int(r[1]))
+            for r in rows
+            if isinstance(r, list) and len(r) >= 2 and str(r[1]).lstrip("-").isdigit()
+        ]
 
     async def list_data_sets_all(self, **params: Any) -> list[DataSet]:
         """Every dataset matching a scope, however partial that scope is.

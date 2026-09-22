@@ -31,12 +31,12 @@ from .api import (
     auth,
     catalog,
     chat,
-    competitions,
     ga,
     lab_tasks,
     llm,
     portfolio,
     power_pool_lab,
+    quarter,
     search_lab,
     sims,
     tasks,
@@ -158,7 +158,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(catalog.router)
-    app.include_router(competitions.router)
     app.include_router(sims.router)
     app.include_router(alphas.router)
     app.include_router(template_lab.router)
@@ -166,6 +165,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(llm.router)
     app.include_router(vault.router)
     app.include_router(portfolio.router)
+    app.include_router(quarter.router)
     app.include_router(tasks.router)
     app.include_router(today.router)
     app.include_router(tools.router)

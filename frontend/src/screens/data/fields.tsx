@@ -1,7 +1,9 @@
 /** Every field in the market: server-sorted, offset-paged, filtered; a row opens its detail. */
 
 import { keepPreviousData, skipToken, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { MaximizeIcon, MinimizeIcon, SparklesIcon } from 'lucide-react'
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import {
   catalog,
   type DataFieldRow,
@@ -28,12 +30,14 @@ import {
   Skeleton,
 } from '@/ui/kit'
 import { Sheet } from '@/ui/overlay'
+import { useMediaQuery } from '@/ui/panels'
 import { type Column, DataTable, Pager, type Sort } from '@/ui/table'
 import {
   type FieldFilterState,
   isActive,
   multiplier,
   parseThemes,
+  RELEVANCE,
   STAT,
   sortRows,
   useDatasetChoice,
@@ -44,31 +48,85 @@ import { DatasetTree } from './tree-view'
 const LIMIT = 100
 const TYPES = ['MATRIX', 'VECTOR', 'GROUP']
 
+/** Two ways to read the search box, because neither answers the other's questions. */
+const MODES = [
+  {
+    value: 'smart' as const,
+    label: 'Smart',
+    hint: 'Ranks whole words from the Field id and its Description, best match first.',
+  },
+  {
+    value: 'text' as const,
+    label: 'Exact',
+    hint: 'Matches the letters you type, anywhere in the Field id or Description.',
+  },
+]
+
+/** A segmented control: one mode lit, the other a way out of it. */
+function SearchMode({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (mode: 'smart' | 'text') => void
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Search mode"
+      className="inline-flex h-9 shrink-0 overflow-hidden rounded-sm border border-hairline"
+    >
+      {MODES.map((mode) => (
+        <button
+          key={mode.value}
+          type="button"
+          title={mode.hint}
+          aria-pressed={value === mode.value}
+          onClick={() => onChange(mode.value)}
+          className={cn(
+            'px-3 text-body-compact transition-colors',
+            value === mode.value
+              ? 'bg-surface-3 font-medium text-ink'
+              : 'text-ink-subtle hover:text-ink',
+          )}
+        >
+          {mode.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * BRAIN's own Data Explorer columns, in its order and under its wording — plus Category, and
+ * Users, which BRAIN still sends on every field but no longer draws. Against Alphas it gives
+ * alphas per user: how hard the crowd is working a field, rather than how many have touched it.
+ */
 const COLUMNS: Column<DataFieldRow>[] = [
+  {
+    key: 'dataset_id',
+    header: 'Dataset',
+    width: 'minmax(68px,1fr)',
+    sortable: true,
+    cell: (r) => <Text value={r.dataset_id} mono className="text-ink-muted" />,
+  },
   {
     key: 'field_id',
     header: 'Field',
-    width: 'minmax(180px,1.4fr)',
+    width: 'minmax(100px,1.5fr)',
     sortable: true,
     cell: (r) => <Text value={r.field_id} mono className="text-ink" />,
   },
   {
     key: 'description',
     header: 'Description',
-    width: 'minmax(240px,2.4fr)',
+    width: 'minmax(96px,2.4fr)',
     cell: (r) => <Text value={r.description} className="text-ink-muted" />,
-  },
-  {
-    key: 'dataset_id',
-    header: 'Dataset',
-    width: 'minmax(120px,1fr)',
-    sortable: true,
-    cell: (r) => <Text value={r.dataset_id} mono className="text-ink-muted" />,
   },
   {
     key: 'category_id',
     header: 'Category',
-    width: 'minmax(160px,1.2fr)',
+    width: 'minmax(92px,1.2fr)',
     sortable: true,
     cell: (r) => (
       <Text
@@ -80,24 +138,45 @@ const COLUMNS: Column<DataFieldRow>[] = [
   {
     key: 'field_type',
     header: 'Type',
-    width: '88px',
+    width: 'minmax(60px,0.6fr)',
     sortable: true,
     cell: (r) => (
-      <span className="num text-body-compact text-ink-subtle">{r.field_type ?? DASH}</span>
+      <span
+        className="num truncate text-body-compact text-ink-subtle"
+        title={r.field_type ?? undefined}
+      >
+        {r.field_type ?? DASH}
+      </span>
     ),
   },
   {
+    key: 'pyramid_multiplier',
+    header: 'Pyramid Theme Multiplier',
+    width: 'minmax(88px,0.8fr)',
+    align: 'right',
+    sortable: true,
+    cell: (r) => multiplier(r.pyramid_multiplier),
+  },
+  {
     key: 'coverage',
-    header: 'Coverage',
-    width: '96px',
+    header: 'Instrument Coverage',
+    width: 'minmax(88px,0.8fr)',
     align: 'right',
     sortable: true,
     cell: (r) => fmt.pct(r.coverage),
   },
   {
+    key: 'date_coverage',
+    header: 'Date Coverage',
+    width: 'minmax(80px,0.7fr)',
+    align: 'right',
+    sortable: true,
+    cell: (r) => fmt.pct(r.date_coverage),
+  },
+  {
     key: 'user_count',
     header: 'Users',
-    width: '88px',
+    width: 'minmax(72px,0.5fr)',
     align: 'right',
     sortable: true,
     cell: (r) => fmt.int(r.user_count),
@@ -105,18 +184,18 @@ const COLUMNS: Column<DataFieldRow>[] = [
   {
     key: 'alpha_count',
     header: 'Alphas',
-    width: '88px',
+    width: 'minmax(68px,0.5fr)',
     align: 'right',
     sortable: true,
     cell: (r) => fmt.int(r.alpha_count),
   },
   {
-    key: 'pyramid_multiplier',
-    header: 'Pyramid',
-    width: '88px',
+    key: 'date_created',
+    header: 'Date added',
+    width: 'minmax(80px,0.8fr)',
     align: 'right',
     sortable: true,
-    cell: (r) => multiplier(r.pyramid_multiplier),
+    cell: (r) => fmt.date(r.date_created),
   },
 ]
 
@@ -131,9 +210,62 @@ const ADVANCED: (keyof FieldFilterState)[] = [
   'pyramid_multiplier_min',
 ]
 
+/**
+ * The columns a window this wide can hold without a horizontal scrollbar, shed in order of
+ * what a narrowed row can least afford to lose. Users is never one of them: BRAIN stopped
+ * drawing that column while still sending the number, and against Alphas it is the only
+ * reading of how hard the crowd is working a field. Everything shed stays in the row's
+ * detail sheet.
+ */
+function useFittingColumns(): Column<DataFieldRow>[] {
+  const roomForCategory = useMediaQuery('(min-width: 1280px)')
+  const roomForType = useMediaQuery('(min-width: 1152px)')
+  const roomForDataset = useMediaQuery('(min-width: 1024px)')
+  return useMemo(() => {
+    const dropped = new Set(
+      [
+        !roomForCategory && 'category_id',
+        !roomForType && 'field_type',
+        !roomForDataset && 'dataset_id',
+      ].filter(Boolean),
+    )
+    return COLUMNS.filter((c) => !dropped.has(c.key))
+  }, [roomForCategory, roomForType, roomForDataset])
+}
+
+/**
+ * The panel on its own, filling the display. Deep dataset research wants every pixel, and the
+ * browser's Fullscreen API is the only thing that can take the space the window chrome holds.
+ */
+function useFullscreen() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    const sync = () => setOn(document.fullscreenElement === ref.current)
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
+  const toggle = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen()
+      return
+    }
+    // The browser refuses outside a user gesture or under a permissions policy; say so rather
+    // than leaving a button that looks broken.
+    ref.current?.requestFullscreen().catch((e: unknown) => {
+      toast.error('Full screen was refused', {
+        description: e instanceof Error ? e.message : undefined,
+      })
+    })
+  }
+  return { ref, on, toggle }
+}
+
 export function FieldsTab({ scope }: { scope: Scope }) {
   const { filter, sort, offset, setSort, page } = useFieldFilter()
   const [datasetIds] = useDatasetChoice()
+  const columns = useFittingColumns()
+  const full = useFullscreen()
   const active: FieldFilterState = { ...filter, dataset_ids: datasetIds }
   const [openId, setOpenId] = useState<string | null>(null)
 
@@ -162,49 +294,66 @@ export function FieldsTab({ scope }: { scope: Scope }) {
   const filtered = Object.values(active).some(isActive)
 
   return (
-    <Panel
-      title="Fields"
-      actions={
-        query.data && (
-          <span className={STAT}>
-            <span className="num text-ink">{fmt.int(query.data.total)}</span>
-            fields
-          </span>
-        )
-      }
-    >
-      <div className="flex flex-col gap-4">
-        <FieldFilters scope={scope} />
-        {query.isError && (query.data?.results.length ?? 0) > 0 && (
-          <ErrorNotice error={query.error} title="Could not load fields" />
-        )}
-        <DataTable
-          label="Data fields"
-          rows={query.data?.results ?? []}
-          columns={COLUMNS}
-          rowKey={(r) => r.field_id}
-          sort={sort}
-          onSort={setSort}
-          onRowClick={(r) => setOpenId(r.field_id)}
-          loading={query.isPending}
-          error={query.error}
-          empty={
-            filtered
-              ? 'No fields match these filters.'
-              : 'No fields in this market yet. Download it in Sync with BRAIN.'
-          }
+    // The fullscreen element paints its own ground: the page behind it is gone, and an
+    // unpainted one shows through as the browser's default black.
+    <div ref={full.ref} className={cn(full.on && 'h-full overflow-auto bg-canvas p-4')}>
+      <Panel
+        className={cn(full.on && 'rounded-none border-0')}
+        title="Fields"
+        actions={
+          <>
+            <Button variant="ghost" size="sm" onClick={full.toggle}>
+              {full.on ? <MinimizeIcon /> : <MaximizeIcon />}
+              {full.on ? 'Exit Full Screen' : 'Full Screen'}
+            </Button>
+            {query.data && (
+              <span className={STAT}>
+                <span className="num text-ink">{fmt.int(query.data.total)}</span>
+                fields
+              </span>
+            )}
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <FieldFilters scope={scope} />
+          {query.isError && (query.data?.results.length ?? 0) > 0 && (
+            <ErrorNotice error={query.error} title="Could not load fields" />
+          )}
+          <DataTable
+            label="Data fields"
+            rows={query.data?.results ?? []}
+            columns={columns}
+            rowKey={(r) => r.field_id}
+            sort={sort}
+            onSort={setSort}
+            onRowClick={(r) => setOpenId(r.field_id)}
+            loading={query.isPending}
+            error={query.error}
+            maxHeight={full.on ? 'calc(100vh - 17rem)' : undefined}
+            empty={
+              filtered
+                ? 'No fields match these filters.'
+                : 'No fields in this market yet. Download it in Sync with BRAIN.'
+            }
+          />
+          {query.data && (
+            <Pager total={query.data.total} offset={offset} limit={LIMIT} onChange={page} />
+          )}
+        </div>
+        <FieldSheet
+          scope={scope}
+          id={openId}
+          onClose={() => setOpenId(null)}
+          container={full.on ? full.ref : undefined}
         />
-        {query.data && (
-          <Pager total={query.data.total} offset={offset} limit={LIMIT} onChange={page} />
-        )}
-      </div>
-      <FieldSheet scope={scope} id={openId} onClose={() => setOpenId(null)} />
-    </Panel>
+      </Panel>
+    </div>
   )
 }
 
 function FieldFilters({ scope }: { scope: Scope }) {
-  const { filter, set, replace } = useFieldFilter()
+  const { filter, set, replace, sort, rank } = useFieldFilter()
   const [datasetIds, setDatasetIds] = useDatasetChoice()
   const picking = useDatasetPick((s) => s.active)
   const active: FieldFilterState = { ...filter, dataset_ids: datasetIds }
@@ -226,10 +375,37 @@ function FieldFilters({ scope }: { scope: Scope }) {
     () => new Map((datasets.data ?? []).map((d) => [d.dataset_id, d.name ?? d.dataset_id])),
     [datasets.data],
   )
+  const categoryNames = useMemo(
+    () => new Map((tree.data?.categories ?? []).map((c) => [c.id, c.name ?? c.id])),
+    [tree.data],
+  )
   const stats = useQuery({
     queryKey: ['catalog', 'stats', scope],
     queryFn: () => catalog.stats(scope),
   })
+
+  /**
+   * A Pyramid Multiplier cell hands over a category; the Datasets tree speaks dataset ids.
+   * Translating as soon as this market's tree is known leaves one selection in one place —
+   * ticked in the tree and summarised as "All of Other" — rather than two that disagree.
+   */
+  const chosenCategories = filter.category_ids
+  const [landed, setLanded] = useState(false)
+  useEffect(() => {
+    const wanted = chosenCategories ?? []
+    if (!tree.data || wanted.length === 0) return
+    const ids = tree.data.datasets
+      .filter((d) => d.category_id !== null && wanted.includes(d.category_id))
+      .map((d) => d.id)
+    // Nothing to tick: leave the category filter alone, so the table stays narrowed and the
+    // chip keeps saying what narrowed it.
+    if (ids.length === 0) return
+    useFieldFilter.getState().set({ category_ids: [], dataset_ids: ids })
+    setLanded(true)
+  }, [tree.data, chosenCategories])
+
+  // Ranking is only on offer while there is a smart search to rank against.
+  const ranked = !!filter.search && (filter.search_mode ?? 'smart') === 'smart'
 
   // The search box types freely; the query follows a beat later.
   const [search, setSearch] = useState(filter.search ?? '')
@@ -258,13 +434,31 @@ function FieldFilters({ scope }: { scope: Scope }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
+        <SearchMode
+          value={filter.search_mode ?? 'smart'}
+          onChange={(mode) => set({ search_mode: mode })}
+        />
         <Input
-          className="w-full sm:w-80"
-          placeholder="Search field id or description"
+          className="w-full sm:w-64"
+          placeholder="Search Field ID or Description"
           aria-label="Search fields"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        {/* Ranking has no column to click, so without this there is no way back to it once a
+            column has been chosen — and no sign it was ever what the table was ordered by. */}
+        {ranked && (
+          <Button
+            variant={sort.key === RELEVANCE ? 'secondary' : 'ghost'}
+            size="sm"
+            aria-pressed={sort.key === RELEVANCE}
+            onClick={rank}
+            title="Order by how well each Field answers the search"
+          >
+            <SparklesIcon />
+            Best Match
+          </Button>
+        )}
         <Chips
           label="Field type"
           value={filter.field_types ?? []}
@@ -281,6 +475,24 @@ function FieldFilters({ scope }: { scope: Scope }) {
             ),
           }))}
         />
+        {/* Only ever arrived at from the Pyramid Multiplier Map, so it shows only when set —
+            but it has to show, or the table is narrowed by something invisible. */}
+        {(filter.category_ids?.length ?? 0) > 0 && (
+          <Chips
+            label="Category"
+            value={filter.category_ids ?? []}
+            onChange={(v) => set({ category_ids: v })}
+            items={(filter.category_ids ?? []).map((id) => ({
+              value: id,
+              title: 'Remove this Category filter',
+              label: (
+                <>
+                  {categoryNames.get(id) ?? id} <span className="text-ink-subtle">×</span>
+                </>
+              ),
+            }))}
+          />
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -308,7 +520,7 @@ function FieldFilters({ scope }: { scope: Scope }) {
 
       <div ref={more} className="scroll-mt-24">
         <Disclosure
-          defaultOpen={picking || undefined}
+          defaultOpen={picking || landed || undefined}
           className={cn(picking && 'border-primary ring-1 ring-primary-subtle')}
           summary={
             <>
@@ -486,10 +698,13 @@ function FieldSheet({
   scope,
   id,
   onClose,
+  container,
 }: {
   scope: Scope
   id: string | null
   onClose: () => void
+  /** While the panel is fullscreen, the sheet has to live inside it to be drawn at all. */
+  container?: RefObject<HTMLElement | null> | undefined
 }) {
   const detail = useQuery({
     queryKey: ['catalog', 'field', scope, id],
@@ -514,6 +729,7 @@ function FieldSheet({
     <Sheet
       open={id != null}
       onOpenChange={(open) => !open && onClose()}
+      container={container}
       title={<span className="num">{id}</span>}
       description={d?.description ?? (detail.isPending ? 'Loading…' : 'No description.')}
     >
@@ -530,11 +746,13 @@ function FieldSheet({
                 ['Category', d.category_name ?? DASH],
                 ['Subcategory', d.subcategory_name ?? DASH],
                 ['Type', d.field_type ?? DASH],
-                ['Coverage', fmt.pct(d.coverage)],
+                ['Instrument Coverage', fmt.pct(d.coverage)],
+                ['Date Coverage', fmt.pct(d.date_coverage)],
                 ['Alpha Count', fmt.int(d.alpha_count)],
                 ['User Count', fmt.int(d.user_count)],
-                ['Pyramid Multiplier', multiplier(d.pyramid_multiplier)],
+                ['Pyramid Theme Multiplier', multiplier(d.pyramid_multiplier)],
                 ['Scope', `${d.region} · D${d.delay} · ${d.universe}`],
+                ['Date added', fmt.date(d.date_created)],
                 ['Downloaded', fmt.dateTime(d.synced_at)],
               ]}
             />

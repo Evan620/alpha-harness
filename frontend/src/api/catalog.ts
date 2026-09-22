@@ -35,6 +35,10 @@ export type FieldSortKey =
   | 'alpha_count'
   | 'pyramid_multiplier'
   | 'field_type'
+  | 'date_coverage'
+  | 'date_created'
+  /** Not a column: how well the row answers the search. */
+  | 'relevance'
 
 /** The backend's own filter, every field optional, with the sort key narrowed to the columns
  * it will actually sort on. */

@@ -17,25 +17,66 @@ export type FieldFilterState = Omit<FieldFilter, 'sort_by' | 'sort_desc' | 'limi
 interface FieldFilterStore {
   filter: FieldFilterState
   sort: Sort
+  /**
+   * Whether the reader picked {@link sort} themselves. Recorded rather than inferred: the
+   * default *is* Alphas descending, so clicking that column is indistinguishable from never
+   * having clicked at all.
+   */
+  chosen: boolean
   offset: number
   set: (change: Partial<FieldFilterState>) => void
   replace: (filter: FieldFilterState) => void
   setSort: (sort: Sort) => void
+  /** Order by how well each row answers the search — the way back from a column. */
+  rank: () => void
   page: (offset: number) => void
+}
+
+/** What a search is sorted by until the reader picks a column, and what it goes back to. */
+export const RELEVANCE = 'relevance'
+const DEFAULT_SORT: Sort = { key: 'alpha_count', desc: true }
+
+/**
+ * The sort a change to the search box leaves behind.
+ *
+ * Relevance exists only while a smart search is running, so it has to give way when the box
+ * empties or the mode turns exact. A column the reader picked themselves outlives all of
+ * that: switching modes to compare two readings of the same search must not silently
+ * re-sort the table under them.
+ */
+function sortAfter(previous: FieldFilterStore, filter: FieldFilterState): Sort {
+  const rankable = !!filter.search && (filter.search_mode ?? 'smart') === 'smart'
+  const { sort, chosen } = previous
+  if (sort.key === RELEVANCE) return rankable ? sort : DEFAULT_SORT
+  return rankable && !chosen ? { key: RELEVANCE, desc: true } : sort
 }
 
 /** Lives outside the Fields tab so the filter survives leaving the Data Explorer and coming back. */
 export const useFieldFilter = create<FieldFilterStore>()((set) => ({
   filter: {},
-  sort: { key: 'alpha_count', desc: true },
+  sort: DEFAULT_SORT,
+  chosen: false,
   offset: 0,
-  set: (change) => set((s) => ({ filter: { ...s.filter, ...change }, offset: 0 })),
-  replace: (filter) => set({ filter, offset: 0 }),
+  set: (change) =>
+    set((s) => {
+      const filter = { ...s.filter, ...change }
+      // Emptying the box ends the search the column was picked for, so the next one is free
+      // to rank itself again. Without this, one column click silences ranking for the session.
+      const cleared = 'search' in change && !change.search && !!s.filter.search
+      const chosen = cleared ? false : s.chosen
+      return { filter, chosen, sort: sortAfter({ ...s, chosen }, filter), offset: 0 }
+    }),
+  // Clearing the filters clears how they were ordered too, so the next search can rank again.
+  replace: (filter) => set({ filter, sort: DEFAULT_SORT, chosen: false, offset: 0 }),
   setSort: (sort) =>
     set({
       sort: { key: sort.key as FieldSortKey, desc: sort.desc },
+      chosen: true,
       offset: 0,
     }),
+  // Not `chosen`: asking for the best match is handing the ordering back to the search, so a
+  // later search ranks itself again instead of being held to this one.
+  rank: () => set({ sort: { key: RELEVANCE, desc: true }, chosen: false, offset: 0 }),
   page: (offset) => set({ offset }),
 }))
 

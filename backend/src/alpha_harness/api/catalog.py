@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -122,12 +122,19 @@ class DataFieldRow(BaseModel):
     subcategory_name: str | None
     description: str | None
     field_type: str | None
+    #: BRAIN's "Instrument Coverage": the share of the universe the field has a value for.
     coverage: float | None
+    #: BRAIN's "Date Coverage": the share of the history it has a value for. A field can be
+    #: complete on one and threadbare on the other, so neither stands in for the other.
+    date_coverage: float | None
     user_count: int | None
     alpha_count: int | None
     pyramid_multiplier: float | None
     #: JSON array text.
     themes: str | None
+    #: BRAIN's "Date added": when the field first appeared in this market. Null until the
+    #: market is downloaded again, because it was not stored before.
+    date_created: date | None
 
 
 class DataFieldDetail(DataFieldRow):

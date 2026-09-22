@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..brain.schemas import SimulationType
-from .lifecycle import RA_CHILDREN
+from .lifecycle import GLB_REGION, GLB_SLOTS, RA_SLOTS
 from .reconcile import same_value, squash
 
 if TYPE_CHECKING:
@@ -50,8 +50,19 @@ class BatchKey:
 
     @property
     def cost(self) -> int:
-        """Concurrent cores one simulation with this key can occupy, at most."""
-        return RA_CHILDREN if self.region_agnostic else 1
+        """Concurrent cores one simulation with this key can occupy, at most.
+
+        GLB counts two: BRAIN gives that region 2 of the 8 slots per simulation, so four
+        run at once (``docs/ANNOUNCEMENTS.md``, 2025-09-23). A batch is one simulation to
+        BRAIN, so its children do not multiply this.
+
+        A region-agnostic one costs the sum of its own children's quota, which varies with
+        the regions its fields reach; :data:`RA_SLOTS` reserves the usual three, so two run
+        at once.
+        """
+        if self.region_agnostic:
+            return RA_SLOTS
+        return GLB_SLOTS if self.region == GLB_REGION else 1
 
     @property
     def max_batch(self) -> int:
@@ -113,8 +124,8 @@ def pack(
 
     Groups items by batch key and fills up to ``free_slots`` *cores* with batches of at most
     ``max_batch`` each, fullest groups first so a round moves the most simulations it can. A
-    core is one ordinary simulation; a region-agnostic one costs four, and never shares a
-    batch (see :attr:`BatchKey.cost` and :attr:`BatchKey.max_batch`).
+    core is one ordinary simulation; a GLB one costs two and a region-agnostic one three, and
+    the latter never shares a batch (see :attr:`BatchKey.cost` and :attr:`BatchKey.max_batch`).
 
     ``task_capacity`` caps how many batches each named task may be given in this round;
     a task absent from the mapping is unconstrained. Items are never mixed across tasks,
