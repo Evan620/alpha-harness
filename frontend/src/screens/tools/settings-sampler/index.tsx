@@ -16,8 +16,9 @@ import { toast } from 'sonner'
 import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
-import { regionLabel } from '@/lib/scope'
+import { DEFAULT_SCOPE, regionLabel, useScopeOptions } from '@/lib/scope'
 import { AstInspector } from '@/screens/pool/shared'
+import { NeutralizationPicker } from '@/screens/research-labs/neutralization'
 import {
   Button,
   Empty,
@@ -543,10 +544,27 @@ export function SettingsSamplerScreen() {
         .filter((p, i, list) => list.findIndex((q) => pairKey(q) === pairKey(p)) === i),
     [plan],
   )
-  const allNeutralizations = useMemo(
-    () => [...new Set((plan?.regions ?? []).flatMap((r) => r.neutralizations))].sort(),
-    [plan],
-  )
+  // Every neutralization the sweep's markets offer between them, under BRAIN's own labels
+  // where the source market knows them. A sweep spans regions, so one that only exists
+  // elsewhere keeps its bare name rather than being dropped.
+  const labelled = useScopeOptions({
+    instrumentType: 'EQUITY',
+    region: String(plan?.settings.region ?? DEFAULT_SCOPE.region),
+    delay: Number(plan?.settings.delay ?? DEFAULT_SCOPE.delay),
+    universe: String(plan?.settings.universe ?? DEFAULT_SCOPE.universe),
+  }).neutralizations
+  const allNeutralizations = useMemo(() => {
+    const names = [...new Set((plan?.regions ?? []).flatMap((r) => r.neutralizations))]
+    const labels = new Map(labelled.map((c) => [c.value, c.label]))
+    // BRAIN's order where it has one, so the two families read the same as everywhere else.
+    const rank = (v: string) => {
+      const at = labelled.findIndex((c) => c.value === v)
+      return at === -1 ? labelled.length : at
+    }
+    return names
+      .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+      .map((value) => ({ value, label: labels.get(value) ?? value }))
+  }, [plan, labelled])
 
   const add = useMutation({
     mutationFn: () =>
@@ -795,22 +813,11 @@ export function SettingsSamplerScreen() {
                   ))}
                 </div>
               </Fieldset>
-              <Fieldset legend="Neutralization">
-                <div className="flex flex-wrap gap-1.5">
-                  {allNeutralizations.map((name) => (
-                    <GroupChip
-                      key={name}
-                      label={name}
-                      group={{ keys: [name], on: neutralizations.includes(name) ? 1 : 0 }}
-                      onChange={(keys, on) =>
-                        setNeutralizations((prev) =>
-                          on ? [...prev, ...keys] : prev.filter((n) => !keys.includes(n)),
-                        )
-                      }
-                    />
-                  ))}
-                </div>
-              </Fieldset>
+              <NeutralizationPicker
+                available={allNeutralizations}
+                value={neutralizations}
+                onChange={setNeutralizations}
+              />
               <Fieldset legend="Max Trade / Max Position">
                 <div className="flex flex-wrap gap-1.5">
                   {allPairs.map((pair) => (

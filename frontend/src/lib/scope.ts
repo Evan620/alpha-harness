@@ -29,6 +29,17 @@ export const REGION_AGNOSTIC = 'ALL'
 export const isRegionAgnostic = (scope: { region: string }): boolean =>
   scope.region === REGION_AGNOSTIC
 
+/**
+ * The regions a region-agnostic simulation is translated into: "data fields in a Region
+ * Agnostic Alpha are translated into GLB, USA, EUR, and ASI Alphas"
+ * (`docs/learn/advanced-topics/region-agnostic-alpha`). Nowhere else can one run, so asking
+ * whether a field exists region-agnostically is a question only these four markets can act on.
+ */
+export const RA_MARKETS: readonly string[] = ['USA', 'EUR', 'ASI', 'GLB']
+
+export const runsRegionAgnostic = (scope: { region: string }): boolean =>
+  RA_MARKETS.includes(scope.region)
+
 /** BRAIN labels the region-agnostic market `ALL`, which says nothing about what it does. */
 export const regionLabel = (region: string): string =>
   region === REGION_AGNOSTIC ? 'All Regions' : region

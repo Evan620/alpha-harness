@@ -116,10 +116,29 @@ const submissionPlanner = createRoute({
   ),
 })
 
-const tasks = createRoute({
-  getParentRoute: () => root,
-  path: '/tasks',
+const correlationBreaker = createRoute({
+  getParentRoute: () => tools,
+  path: 'correlation-breaker',
+  validateSearch: (search: Record<string, unknown>) => ({
+    alpha: typeof search['alpha'] === 'string' ? search['alpha'] : undefined,
+  }),
+  component: lazyRouteComponent(
+    () => import('@/screens/tools/correlation-breaker'),
+    'CorrelationBreakerScreen',
+  ),
+})
+
+const tasks = createRoute({ getParentRoute: () => root, path: '/tasks' })
+const tasksIndex = createRoute({
+  getParentRoute: () => tasks,
+  path: '/',
   component: lazyRouteComponent(() => import('@/screens/tasks'), 'TasksScreen'),
+})
+/** One task's whole result set, with room for the statistics the card cannot hold. */
+const taskResults = createRoute({
+  getParentRoute: () => tasks,
+  path: '$taskId',
+  component: lazyRouteComponent(() => import('@/screens/tasks/results'), 'TaskResultsScreen'),
 })
 
 const pool = createRoute({ getParentRoute: () => root, path: '/pool' })
@@ -178,8 +197,8 @@ const routeTree = root.addChildren([
   matrix,
   data.addChildren([dataIndex, dataTab]),
   labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab]),
-  tools.addChildren([toolsIndex, settingsSampler, submissionPlanner]),
-  tasks,
+  tools.addChildren([toolsIndex, settingsSampler, submissionPlanner, correlationBreaker]),
+  tasks.addChildren([tasksIndex, taskResults]),
   pool.addChildren([poolIndex, poolTab]),
   portfolio,
   alpha,

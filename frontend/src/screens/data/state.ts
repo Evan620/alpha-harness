@@ -103,7 +103,7 @@ export function useDatasetChoice(): [string[], (ids: string[]) => void] {
 }
 
 export const isActive = (v: unknown) =>
-  v != null && v !== '' && !(Array.isArray(v) && v.length === 0)
+  v != null && v !== '' && v !== false && !(Array.isArray(v) && v.length === 0)
 
 export const sameScope = (a: Scope, b: Scope) =>
   a.region === b.region &&

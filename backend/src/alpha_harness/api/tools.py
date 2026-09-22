@@ -1,6 +1,8 @@
 """Tools: helpers that act on an Alpha the consultant already has.
 
 The Settings Sampler re-runs one proven expression everywhere BRAIN will accept it. The
+Correlation Breaker does the opposite — it holds the settings still and re-shapes the
+expression, for an Alpha the platform says is already in the production pool. The
 Submission Planner then decides which of the results are worth submitting, and in what order.
 Neither simulates on its own: previews only read, and queueing hands work to the scheduler
 like any lab.
@@ -20,9 +22,9 @@ from ..db.models import Submission, Trial, TrialState, utcnow
 from ..engine.packer import MAX_BATCH
 from ..engine.slots import DEFAULT_SLOTS
 from ..labs.launch import AddedTask, add_study
-from ..labs.params import SETTINGS_SAMPLER, SettingsParams
+from ..labs.params import CORRELATION_BREAKER, SETTINGS_SAMPLER, BreakerParams, SettingsParams
 from ..schemas import Out
-from ..tools import settings_sampler, submission_planner
+from ..tools import correlation_breaker, settings_sampler, submission_planner
 from ..vault.yields import is_promising, is_submittable
 from .deps import State, refuse
 
@@ -389,3 +391,118 @@ async def mark_submitted(body: SubmittedRequest, state: State) -> None:
         else:
             await session.execute(delete(Submission).where(Submission.alpha_id == body.alpha_id))
         await session.commit()
+
+
+# --- Correlation Breaker ----------------------------------------------------
+
+
+class BreakerSettings(Out):
+    """What every simulation runs at: the source Alpha's own, never varied."""
+
+    region: str | None
+    delay: int | None
+    universe: str | None
+    neutralization: str | None
+    decay: int | None
+    truncation: float | None
+
+
+class BreakerRecipe(Out):
+    id: str
+    name: str
+    why: str
+    #: What it costs, when it costs something worth knowing before running it.
+    caution: str
+    #: Only the re-shape, written against ``alpha``; the binding is shown once, above.
+    transform: str
+    #: Why it cannot run here, empty when it can.
+    blocked: str
+
+
+class BreakerPlan(Out):
+    alpha_id: str
+    expression: str
+    #: The source Alpha reduced to ``alpha``, shown once above the re-shapes.
+    bound: str
+    settings: BreakerSettings
+    #: BRAIN's own production-correlation check, as it last reported it.
+    correlation: dict[str, Any] | None
+    recipes: list[BreakerRecipe]
+    problems: list[str]
+
+
+class BreakerRequest(BaseModel):
+    alpha_id: str = Field(min_length=1, max_length=64, alias="alphaId")
+    #: Which recipes to run; empty means every one the plan offers.
+    recipes: list[str] = Field(default_factory=list, max_length=50)
+    cores: int = Field(default=DEFAULT_SLOTS, ge=1)
+
+    model_config = {"populate_by_name": True}
+
+
+@router.post("/correlation-breaker/preview")
+async def breaker_preview(body: BreakerRequest, state: State) -> BreakerPlan:
+    """The Alpha, the settings its re-shapes will hold, and every recipe's expression.
+
+    Free: reads the Alpha and the catalog, simulates nothing.
+    """
+    return BreakerPlan.model_validate(await correlation_breaker.plan(state, body.alpha_id.strip()))
+
+
+@router.post("/correlation-breaker/tasks")
+async def breaker_task(body: BreakerRequest, state: State) -> AddedTask:
+    """Queue one simulation per chosen recipe, every one at the Alpha's own settings."""
+    if body.cores > state.engine.slots:
+        raise refuse(
+            422,
+            "too_many_cores",
+            f"The engine has {state.engine.slots} slots, so a task cannot hold {body.cores}.",
+        )
+    found = await correlation_breaker.plan(state, body.alpha_id.strip())
+    if found["problems"]:
+        raise refuse(422, "correlation_breaker_blocked", found["problems"][0])
+
+    wanted = set(body.recipes)
+    # A recipe the plan marked blocked is never queued, whether or not it was asked for.
+    runnable = {r["id"] for r in found["recipes"] if not r["blocked"]}
+    chosen = [
+        r
+        for r in correlation_breaker.RECIPES
+        if r.id in runnable and (not wanted or r.id in wanted)
+    ]
+    if not chosen:
+        raise refuse(
+            422,
+            "no_simulations",
+            "Nothing to run: every chosen re-shape needs an operator or a field this market "
+            "does not have.",
+        )
+
+    compressed = correlation_breaker.compress(found["expression"])
+    requests = correlation_breaker.requests(compressed, chosen, found["rawSettings"])
+    settings = found["settings"]
+    row = await add_study(
+        state,
+        now=utcnow(),
+        lab="Correlation Breaker",
+        prefix="correlation-breaker",
+        sampler=CORRELATION_BREAKER,
+        params=BreakerParams(
+            region=str(settings["region"] or ""),
+            delay=int(settings["delay"] or 0),
+            alpha_id=body.alpha_id,
+            universe=str(settings["universe"] or ""),
+            neutralization=str(settings["neutralization"] or ""),
+            decay=int(settings["decay"] or 0),
+            truncation=float(settings["truncation"] or 0.08),
+            recipes=[r.id for r in chosen],
+            cores=body.cores,
+        ),
+        objective="sharpe",
+        simulations=len(requests),
+        batch_size=(body.cores + 1) * MAX_BATCH,
+        template_source=found["expression"],
+        template_name=f"Correlation Breaker · {body.alpha_id}",
+        seeds=settings_sampler.seed_trials(requests, has_source=False),
+    )
+    return AddedTask(id=row.id, name=row.name)

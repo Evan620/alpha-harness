@@ -5,6 +5,7 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import {
   CopyIcon,
   EllipsisIcon,
+  ExternalLinkIcon,
   PauseIcon,
   PencilIcon,
   PlayIcon,
@@ -716,6 +717,18 @@ function TaskDetail({
         {top.isError && top.data && (
           <ErrorNotice error={top.error} title="Could not load the best Alphas" />
         )}
+        {/* A sweep's results are a comparison across markets, which needs more room than a
+            card: the whole set, grouped by region and correlated, gets its own page. */}
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            variant="secondary"
+            render={<Link to="/tasks/$taskId" params={{ taskId: String(task.id) }} />}
+          >
+            <ExternalLinkIcon />
+            Open full results
+          </Button>
+        </div>
         <DataTable
           label={task.lab === SETTINGS_SAMPLER ? 'Results' : 'Top Alphas'}
           rows={rows}

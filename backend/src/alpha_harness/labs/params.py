@@ -24,6 +24,8 @@ TEMPLATE_SAMPLER = "template"
 POWER_POOL_SAMPLER = "power-pool"
 #: Studies that re-run one proven expression across markets and settings (tools.settings_sampler).
 SETTINGS_SAMPLER = "settings-sampler"
+#: Studies that re-shape one Alpha's expression at its own settings (tools.correlation_breaker).
+CORRELATION_BREAKER = "correlation-breaker"
 #: Studies that are research-lab tasks, run only from the Tasks tab, by their lab's name.
 TASK_SAMPLERS = {
     SEARCH_SAMPLER: "Search Lab",
@@ -31,6 +33,7 @@ TASK_SAMPLERS = {
     GA_SAMPLER: "Evolution Lab",
     POWER_POOL_SAMPLER: "LLM Power Pool Lab",
     SETTINGS_SAMPLER: "Settings Sampler",
+    CORRELATION_BREAKER: "Correlation Breaker",
 }
 
 
@@ -131,12 +134,33 @@ class SettingsParams(TaskParams):
     )
 
 
+class BreakerParams(TaskParams):
+    """Correlation Breaker: one Alpha re-shaped, every simulation written up front.
+
+    The settings are the source Alpha's and are never varied, so they are recorded here to be
+    shown on the task card rather than to be chosen from.
+    """
+
+    alpha_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("alphaId", "alpha_id"),
+        serialization_alias="alphaId",
+    )
+    universe: str = ""
+    neutralization: str = ""
+    decay: int = 0
+    truncation: float = 0.08
+    #: The recipes queued, by id, for the task's detail line.
+    recipes: list[str] = Field(default_factory=list)
+
+
 BY_SAMPLER: dict[str, type[TaskParams]] = {
     SEARCH_SAMPLER: SearchParams,
     TEMPLATE_SAMPLER: TemplateParams,
     GA_SAMPLER: EvolutionParams,
     POWER_POOL_SAMPLER: PowerPoolParams,
     SETTINGS_SAMPLER: SettingsParams,
+    CORRELATION_BREAKER: BreakerParams,
 }
 
 

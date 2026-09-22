@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, Field
 
+from ..brain.schemas import REGION_AGNOSTIC_REGION
 from .search import MATCH, TABLE, query_terms
 from .search import ready as search_ready
 
@@ -94,6 +95,10 @@ class FieldFilter(BaseModel):
 
     has_theme: bool | None = None
 
+    #: Only fields that also exist in region ``ALL`` — the ones an idea could be run
+    #: region-agnostically on. Meaningless when the scope already is ``ALL``.
+    region_agnostic: bool = False
+
     #: ``smart`` (ranked words) or ``text`` (literal substring).
     search_mode: str = SMART
 
@@ -166,6 +171,12 @@ class FieldFilter(BaseModel):
             if value is not None:
                 clauses.append(f"{column} {op} ?")
                 params.append(value)
+
+        if self.region_agnostic and scope.region != REGION_AGNOSTIC_REGION:
+            # By field id alone: region ALL keeps its own delay and universes, and what is
+            # being asked is whether the field exists there at all.
+            clauses.append("field_id IN (SELECT field_id FROM data_field WHERE region = ?)")
+            params.append(REGION_AGNOSTIC_REGION)
 
         if self.has_theme is not None:
             clauses.append("themes IS NOT NULL" if self.has_theme else "themes IS NULL")

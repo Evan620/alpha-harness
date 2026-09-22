@@ -1,7 +1,7 @@
 /** Every field in the market: server-sorted, offset-paged, filtered; a row opens its detail. */
 
 import { keepPreviousData, skipToken, useQuery } from '@tanstack/react-query'
-import { MaximizeIcon, MinimizeIcon, SparklesIcon } from 'lucide-react'
+import { GlobeIcon, MaximizeIcon, MinimizeIcon, SparklesIcon } from 'lucide-react'
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
@@ -14,6 +14,7 @@ import {
 import { type Scope, scopeLabel } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
+import { runsRegionAgnostic } from '@/lib/scope'
 import { useDebounced } from '@/lib/use-debounced'
 import { useDatasetPick } from '@/screens/data/dataset-pick'
 import {
@@ -475,6 +476,21 @@ function FieldFilters({ scope }: { scope: Scope }) {
             ),
           }))}
         />
+        {/* The fields this market shares with region ALL: the ones an idea here could also be
+            run region-agnostically on. Offered only where such a run is possible — a JPN field
+            being in ALL says nothing a JPN researcher can act on. */}
+        {runsRegionAgnostic(scope) && (
+          <Button
+            variant={filter.region_agnostic ? 'primary' : 'secondary'}
+            size="sm"
+            aria-pressed={Boolean(filter.region_agnostic)}
+            title="Only Fields that also exist in region ALL"
+            onClick={() => set({ region_agnostic: !filter.region_agnostic })}
+          >
+            <GlobeIcon />
+            Region Agnostic
+          </Button>
+        )}
         {/* Only ever arrived at from the Pyramid Multiplier Map, so it shows only when set —
             but it has to show, or the table is narrowed by something invisible. */}
         {(filter.category_ids?.length ?? 0) > 0 && (

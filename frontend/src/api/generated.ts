@@ -1580,6 +1580,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tools/correlation-breaker/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Breaker Preview
+         * @description The Alpha, the settings its re-shapes will hold, and every recipe's expression.
+         *
+         *     Free: reads the Alpha and the catalog, simulates nothing.
+         */
+        post: operations["breaker_preview_api_tools_correlation_breaker_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tools/correlation-breaker/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Breaker Task
+         * @description Queue one simulation per chosen recipe, every one at the Alpha's own settings.
+         */
+        post: operations["breaker_task_api_tools_correlation_breaker_tasks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tools/settings-sampler/preview": {
         parameters: {
             query?: never;
@@ -2280,6 +2322,69 @@ export interface components {
         BrainPayload: {
             [key: string]: unknown;
         };
+        /** BreakerPlan */
+        BreakerPlan: {
+            /** Alphaid */
+            alphaId: string;
+            /** Bound */
+            bound: string;
+            /** Correlation */
+            correlation: {
+                [key: string]: unknown;
+            } | null;
+            /** Expression */
+            expression: string;
+            /** Problems */
+            problems: string[];
+            /** Recipes */
+            recipes: components["schemas"]["BreakerRecipe"][];
+            settings: components["schemas"]["BreakerSettings"];
+        };
+        /** BreakerRecipe */
+        BreakerRecipe: {
+            /** Blocked */
+            blocked: string;
+            /** Caution */
+            caution: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Transform */
+            transform: string;
+            /** Why */
+            why: string;
+        };
+        /** BreakerRequest */
+        BreakerRequest: {
+            /** Alphaid */
+            alphaId: string;
+            /**
+             * Cores
+             * @default 8
+             */
+            cores: number;
+            /** Recipes */
+            recipes?: string[];
+        };
+        /**
+         * BreakerSettings
+         * @description What every simulation runs at: the source Alpha's own, never varied.
+         */
+        BreakerSettings: {
+            /** Decay */
+            decay: number | null;
+            /** Delay */
+            delay: number | null;
+            /** Neutralization */
+            neutralization: string | null;
+            /** Region */
+            region: string | null;
+            /** Truncation */
+            truncation: number | null;
+            /** Universe */
+            universe: string | null;
+        };
         /** CancelResult */
         CancelResult: {
             /** Acknowledged */
@@ -2786,6 +2891,11 @@ export interface components {
             offset: number;
             /** Pyramid Multiplier Min */
             pyramid_multiplier_min?: number | null;
+            /**
+             * Region Agnostic
+             * @default false
+             */
+            region_agnostic: boolean;
             /** Search */
             search?: string | null;
             /**
@@ -7094,6 +7204,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Bar"];
+                };
+            };
+        };
+    };
+    breaker_preview_api_tools_correlation_breaker_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BreakerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BreakerPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    breaker_task_api_tools_correlation_breaker_tasks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BreakerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddedTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -133,14 +133,19 @@ _TOKEN = re.compile(
 )
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+#: ``//`` is Fast Expression's own line comment and ``#`` is what a model writing one reaches
+#: for; BRAIN accepts both, and Alphas in the vault carry both.
+_LINE_COMMENT = re.compile(r"(?://|#)[^\n]*")
 
 _LEVELS: tuple[tuple[str, ...], ...] = (("||",), ("&&",), COMPARISONS, ("+", "-"), ("*", "/"))
 
 
 def tokenize(text: str) -> list[tuple[str, str, int]]:
     tokens: list[tuple[str, str, int]] = []
-    # Block comments are part of Fast Expression; blanked, not removed, so positions hold.
-    text = _COMMENT.sub(lambda m: " " * len(m.group()), text).rstrip()
+    # Comments are part of Fast Expression; blanked, not removed, so positions hold and a
+    # parse error still points at the character the reader can see.
+    blank = lambda m: " " * len(m.group())  # noqa: E731
+    text = _LINE_COMMENT.sub(blank, _COMMENT.sub(blank, text)).rstrip()
     position = 0
     while position < len(text):
         match = _TOKEN.match(text, position)
