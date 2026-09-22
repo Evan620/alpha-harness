@@ -698,7 +698,7 @@ function BlockMenu({ node, path, close }: { node: OperatorNode; path: Path; clos
   const allowed = choices(node, ctx.blocks)
   const update = (next: OperatorNode) => ctx.change(put(ctx.root, path, next))
 
-  const setOption = (key: string, value: number | boolean | undefined) => {
+  const setOption = (key: string, value: number | boolean | string | undefined) => {
     const options = Object.fromEntries(
       Object.entries(node.options ?? {}).filter(([name]) => name !== key),
     )
@@ -776,6 +776,79 @@ function BlockMenu({ node, path, close }: { node: OperatorNode; path: Path; clos
   )
 }
 
+/** A text option, drafted locally and committed when it is valid.
+ *
+ * The draft is the point. Validating each keystroke against the finished shape and clearing
+ * the value when it fails makes a list of numbers impossible to type: `0` is not a list, so
+ * the first keystroke would be wiped before the comma ever arrived.
+ */
+function WordOption({
+  name,
+  fallback,
+  value,
+  onChange,
+}: {
+  name: string
+  fallback: string
+  value: number | boolean | string | undefined
+  onChange: (value: number | boolean | string | undefined) => void
+}) {
+  const committed = typeof value === 'string' ? value : ''
+  const [draft, setDraft] = useState(committed)
+  // Follows the block when it changes underneath — another option edited, or an undo.
+  const [seen, setSeen] = useState(committed)
+  if (seen !== committed) {
+    setSeen(committed)
+    setDraft(committed)
+  }
+
+  // The same two shapes the backend accepts, so a refusal never arrives on save.
+  const valid = (text: string) =>
+    /^[A-Za-z][A-Za-z0-9_]*$/.test(text) ||
+    /^-?\d+(?:\.\d+)?(?:\s*,\s*-?\d+(?:\.\d+)?)+$/.test(text)
+
+  const commit = (text: string) => {
+    const clean = text.trim()
+    if (clean === '') onChange(undefined)
+    else if (valid(clean)) onChange(clean)
+  }
+
+  // Only after they have left the field: a list of numbers is invalid for most of the time
+  // it takes to type one, and flagging that on every keystroke is noise, not help.
+  const [left, setLeft] = useState(false)
+  const clean = draft.trim()
+  const bad = left && clean !== '' && !valid(clean)
+  return (
+    <label className="flex items-center justify-between gap-3 text-body text-ink-muted">
+      <span className="num">{name}</span>
+      <Input
+        className="num w-40"
+        spellCheck={false}
+        autoComplete="off"
+        placeholder={fallback}
+        value={draft}
+        aria-invalid={bad}
+        // Drafted here, committed on the way out: committing mid-keystroke rewrote the
+        // tree on every valid prefix of a list.
+        onChange={(e) => {
+          setLeft(false)
+          setDraft(e.target.value)
+        }}
+        onBlur={() => {
+          setLeft(true)
+          if (clean === '' || valid(clean)) commit(draft)
+          // Half-typed and left behind: back to what the block already held.
+          else setDraft(committed)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          if (e.key === 'Escape') setDraft(committed)
+        }}
+      />
+    </label>
+  )
+}
+
 function OptionInput({
   name,
   fallback,
@@ -783,10 +856,18 @@ function OptionInput({
   onChange,
 }: {
   name: string
-  fallback: number | boolean
-  value: number | boolean | undefined
-  onChange: (value: number | boolean | undefined) => void
+  fallback: number | boolean | string
+  value: number | boolean | string | undefined
+  onChange: (value: number | boolean | string | undefined) => void
 }) {
+  // An option whose default is text is either a name that chooses behaviour — `quantile(x,
+  // driver = gaussian)` also takes `cauchy` and `uniform` — or a list of numbers, as in
+  // `bucket(x, range = "0, 1, 0.1")`. Typed rather than picked from a list: BRAIN publishes
+  // the default in the operator's signature but never the alternatives, so a list here
+  // would be a guess that goes stale.
+  if (typeof fallback === 'string') {
+    return <WordOption name={name} fallback={fallback} value={value} onChange={onChange} />
+  }
   if (typeof fallback === 'boolean') {
     return (
       <Checkbox

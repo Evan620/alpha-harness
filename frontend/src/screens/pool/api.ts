@@ -30,6 +30,8 @@ export interface AlphaPageRequest {
   minimum?: Partial<Record<AlphaMetricKey, number>>
   maximum?: Partial<Record<AlphaMetricKey, number>>
   search?: string | null
+  /** Only Alphas the Evolution Lab can breed from, for when this table picks seeds. */
+  evolvable?: boolean
   /** 1..500 */
   limit?: number
   offset?: number

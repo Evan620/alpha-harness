@@ -22,6 +22,7 @@ import {
   TEXT_TONE,
   type Tone,
 } from '@/ui/kit'
+import { CompetitionPanel } from './competition'
 import { GettingStarted } from './getting-started'
 import { WorkInFlight } from './work'
 
@@ -49,6 +50,7 @@ export function DashboardScreen() {
       {/* `RunToday` (./run-today) is deliberately unmounted, not dead: dispatching from the
           Dashboard is coming back. */}
       <GettingStarted today={day.data} />
+      <CompetitionPanel />
       {day.isError && <ErrorNotice error={day.error} title="Today's figures could not load" />}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">

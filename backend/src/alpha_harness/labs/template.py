@@ -67,15 +67,26 @@ SYMBOLS = {
     "less_equal": "<=",
 }
 #: Operators whose inputs no block can give. Backfill is a block: a template shows its own.
-EXCLUDED = frozenset({"ts_step", "bucket"})
+EXCLUDED = frozenset({"ts_step"})
 #: Operators that make a group: every input is a group, and they fit only group inputs.
 GROUP_OUTPUT = frozenset({"densify", "group_cartesian_product"})
+#: Operators that turn a *signal* into a group, so they take signals and fit group inputs.
+#: ``bucket(rank(x), range="0, 1, 0.1")`` is how a continuous signal becomes something
+#: ``group_rank`` can group by.
+GROUP_MAKERS = frozenset({"bucket"})
 #: Vector operators are field preparation, chosen with the task; the rest are not for Alphas.
 EXCLUDED_CATEGORIES = frozenset({"Vector", "Special", "Reduce"})
 LOOKBACK_PARAMS = frozenset({"d", "lookback"})
 GROUP_PARAMS = frozenset({"group", "g", "g1", "g2"})
 _NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _OPTION = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+#: An option *value* that names a behaviour, e.g. ``driver = cauchy``.
+_WORD = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+#: An option *value* that is a list of numbers, e.g. ``range = "0, 1, 0.1"`` or
+#: ``buckets = "2,5,6,7,10"``. Written as one string because that is how BRAIN takes it.
+_NUMBER_LIST = re.compile(r"^-?\d+(?:\.\d+)?(?:\s*,\s*-?\d+(?:\.\d+)?)+$")
+#: Straight and curly both: the operator reference is typed prose and uses either.
+_QUOTES = "\"'\u201c\u201d"
 _COMPARISON = re.compile(r"^\s*input1\s*(==|!=|>=|<=|>|<)\s*input2\s*$")
 
 
@@ -91,7 +102,7 @@ class Block:
     #: ``signal``, ``lookback`` or ``group`` for each input, in order.
     inputs: tuple[str, ...]
     #: Keyword options with a number or true/false default, e.g. ``{"std": 4}``.
-    options: dict[str, float | bool]
+    options: dict[str, float | bool | str]
     #: Written between its two inputs (``x > y``) rather than as a call.
     symbol: str | None = None
     #: What it gives: ``signal``, or ``group`` for an operator that makes a group.
@@ -126,6 +137,9 @@ def blocks(operators: list[dict[str, Any]]) -> dict[str, Block]:
         if name in GROUP_OUTPUT:
             inputs = tuple("group" for _ in shape[0])
             found[name] = Block(name, info.category, inputs, shape[1], None, "group")
+        elif name in GROUP_MAKERS:
+            # Its inputs stay signals; only what it *gives* is a group.
+            found[name] = Block(name, info.category, shape[0], shape[1], None, "group")
         else:
             found[name] = Block(name, info.category, shape[0], shape[1], SYMBOLS.get(name))
     for operator in operators:
@@ -142,13 +156,22 @@ def blocks(operators: list[dict[str, Any]]) -> dict[str, Block]:
     return dict(sorted(found.items()))
 
 
-def _shape(info: OperatorInfo) -> tuple[tuple[str, ...], dict[str, float | bool]] | None:
+def _shape(info: OperatorInfo) -> tuple[tuple[str, ...], dict[str, float | bool | str]] | None:
     inputs: list[str] = []
-    options: dict[str, float | bool] = {}
+    options: dict[str, float | bool | str] = {}
     for raw in info.params:
         key, equals, default = (part.strip() for part in raw.partition("="))
         if equals:
             value = _default(default)
+            # A word on a lookback or group parameter is BRAIN's own symbol for the input
+            # it takes, not a value to choose: ``ts_backfill(x, lookback = d)`` still takes
+            # a lookback, and reading ``d`` as a word would turn that input into an option.
+            if isinstance(value, str) and (key in LOOKBACK_PARAMS or key in GROUP_PARAMS):
+                value = None
+            # ``float("NaN")`` parses, and JSON has no way to write the result. No operator
+            # publishes such a default today; one would otherwise break the whole payload.
+            if isinstance(value, float) and not math.isfinite(value):
+                value = None
             if value is not None and _OPTION.match(key):
                 options[key] = value
             if value is not None or key not in LOOKBACK_PARAMS:
@@ -165,14 +188,23 @@ def _shape(info: OperatorInfo) -> tuple[tuple[str, ...], dict[str, float | bool]
     return (tuple(inputs), options) if inputs else None
 
 
-def _default(text: str) -> float | bool | None:
+def _default(text: str) -> float | bool | str | None:
+    """One option's default, as its published definition writes it.
+
+    Words and lists of numbers count, not only single numbers and flags. Several operators
+    choose behaviour by name — ``quantile(x, driver = gaussian)`` — and ``bucket`` takes the
+    edges of its buckets as one string, ``range = "0, 1, 0.1"``. Read as numbers alone, both
+    kinds were dropped here, so the block never offered them: no template could ask for
+    ``cauchy``, and ``bucket`` had no usable form at all.
+    """
     lowered = text.lower()
     if lowered in ("true", "false"):
         return lowered == "true"
     try:
         number = float(text)
     except ValueError:
-        return None
+        value = text.strip().strip(_QUOTES).strip()
+        return value if _WORD.match(value) or _NUMBER_LIST.match(value) else None
     return int(number) if number.is_integer() else number
 
 
@@ -239,6 +271,11 @@ def _load(slot: Any, depth: int, count: list[int]) -> dict[str, Any] | None:
 def _is_value(value: Any) -> bool:
     if isinstance(value, bool):
         return True
+    if isinstance(value, str):
+        # A bare word or a list of numbers, nothing else: the value names a behaviour BRAIN
+        # publishes or the edges of its buckets, and it is written straight into an
+        # expression.
+        return bool(_WORD.match(value) or _NUMBER_LIST.match(value))
     return isinstance(value, int | float) and math.isfinite(value)
 
 
@@ -446,9 +483,13 @@ def _written(node: dict[str, Any], path: str, params: dict[str, Any], use: Used)
     return _literal(node["value"])
 
 
-def _literal(value: float | bool) -> Node:
+def _literal(value: float | bool | str) -> Node:
     if isinstance(value, bool):
         return Node("name", "true" if value else "false")
+    if isinstance(value, str):
+        # Quoted, as the operator reference writes it, so the word can never be mistaken
+        # for a data field of the same name.
+        return Node("str", f'"{value}"')
     number = float(value)
     text = str(int(abs(number))) if number.is_integer() else repr(abs(number))
     return Node("unary", "-", (Node("num", text),)) if number < 0 else Node("num", text)

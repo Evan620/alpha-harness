@@ -172,25 +172,35 @@ class Ledger:
         self._daily[(key_id, model, day)] = count
         return count
 
-    async def headroom(self, key_id: int, model: ModelInfo) -> Headroom:
-        """What is left, and the first limit that would stop the next request."""
+    async def headroom(self, key_id: int, model: ModelInfo, *, cap: int | None = None) -> Headroom:
+        """What is left, and the first limit that would stop the next request.
+
+        ``cap`` is the key's own daily limit and wins over the model's when it is set. Two
+        things need that. A paid key has no published daily ceiling, so the user names one
+        and it is the only thing standing between them and a bill. And a *discovered* model
+        carries :data:`UNKNOWN_LIMITS`, deliberately tiny — correct for a free tier nobody
+        has documented, and absurd on an account that is being billed per token.
+        """
         now = time.monotonic()
         window = self._window(key_id, model.id)
         today = await self._requests_today(key_id, model.id)
+        daily = cap if cap is not None else model.rpd
 
         state = Headroom(
             key_id=key_id,
             model=model.id,
             requests_today=today,
-            requests_per_day=model.rpd,
+            requests_per_day=daily,
             requests_this_minute=window.requests(now),
             requests_per_minute=model.rpm,
             tokens_this_minute=window.tokens(now),
             tokens_per_minute=model.tpm,
         )
 
-        # Daily first: it is the one that cannot be waited out in any useful sense.
-        if today >= model.rpd:
+        # Daily first: it is the one that cannot be waited out in any useful sense. Zero is
+        # "no daily ceiling", not "already spent": a paid model publishes none, and reading
+        # it literally would refuse the day's very first request.
+        if daily > 0 and today >= daily:
             state.blocked_by = "requests_per_day"
             state.retry_after = seconds_until_reset()
         elif state.requests_this_minute >= model.rpm:
@@ -202,14 +212,19 @@ class Ledger:
         return state
 
     async def allows(
-        self, key_id: int, model: ModelInfo, *, estimated_tokens: int = DEFAULT_TOKEN_ESTIMATE
+        self,
+        key_id: int,
+        model: ModelInfo,
+        *,
+        estimated_tokens: int = DEFAULT_TOKEN_ESTIMATE,
+        cap: int | None = None,
     ) -> Headroom:
         """Headroom, also refusing a request whose *size* would breach TPM.
 
         Nothing is reserved between this check and :meth:`record`, so callers checking at
         once can overshoot a limit by their number.
         """
-        state = await self.headroom(key_id, model)
+        state = await self.headroom(key_id, model, cap=cap)
         if state.available and state.tokens_this_minute + estimated_tokens > model.tpm:
             state.blocked_by = "tokens_per_minute"
             state.retry_after = self._window(key_id, model.id).next_free(time.monotonic())
@@ -256,12 +271,21 @@ class Ledger:
         for cached in [k for k in self._daily if k[2] != day]:
             del self._daily[cached]
 
-    async def penalise(self, key_id: int, model: ModelInfo, *, daily: bool) -> None:
-        """Believe Google over our own arithmetic.
+    async def penalise(
+        self, key_id: int, model: ModelInfo, *, daily: bool, cap: int | None = None
+    ) -> None:
+        """Believe the provider over our own arithmetic.
 
         A ``429`` means the local count was wrong, so the count is moved to the ceiling and
         rotation immediately treats this pair as spent rather than retrying into it.
+
+        ``cap`` is the key's own ceiling, as in :meth:`headroom`. Without it a paid model,
+        whose published ``rpd`` is zero, would be moved to a ceiling of zero — which is to
+        say not moved at all, and rotation would retry into the same 429 for good.
         """
+        # One past what it has, when there is no published ceiling: the point is to mark
+        # this pair spent, and a ceiling of zero would mark nothing.
+        ceiling = cap if cap is not None else model.rpd
         if daily:
             day = quota_day()
             async with self.db.session() as session:
@@ -277,7 +301,7 @@ class Ledger:
                     # row is read back before then.
                     row = KeyUsage(api_key_id=key_id, model=model.id, day=day, requests=0, tokens=0)
                     session.add(row)
-                row.requests = max(row.requests or 0, model.rpd)
+                row.requests = max(row.requests or 0, ceiling or (row.requests or 0) + 1)
                 await session.commit()
                 self._daily[(key_id, model.id, day)] = row.requests
             log.warning("llm.budget.daily_exhausted", key_id=key_id, model=model.id)

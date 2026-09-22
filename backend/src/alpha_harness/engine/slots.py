@@ -33,7 +33,7 @@ from ..brain.errors import (
 )
 from ..brain.filters import platform_midnight
 from ..brain.schemas import SimulationRequest
-from ..db.models import DedupEntry, SimStatus, SimulationRecord, TaskQuota, utcnow
+from ..db.models import DedupEntry, SimStatus, SimulationRecord, Study, TaskQuota, utcnow
 from .awake import StayAwake
 from .lifecycle import (
     ACTIVE,
@@ -84,11 +84,21 @@ AWAKE_TICKS = 15
 #: A wait of TICK_SECONDS that took this long means the computer slept through it.
 SLEEP_GAP = 60.0
 
+#: The task work carries when nothing owns it — a one-off run from the UI rather than a
+#: lab task. It has no study by design, so it is the one task exempt from the orphan sweep.
+MANUAL_TASK = "manual"
+
 #: Hashes per duplicate lookup in :meth:`BatchEngine.enqueue`.
 ENQUEUE_CHUNK = 500
 
 #: Recent completions the time-left estimate is measured over.
 RATE_WINDOW = timedelta(minutes=15)
+
+#: How often queued work with no task left is swept up.
+ORPHAN_SWEEP_SECONDS = 60.0
+
+#: Cancellations in flight at once when a task is forced to stop.
+ABANDON_AT_ONCE = 8
 
 #: Asked while BRAIN refuses the session; True once simulations may be sent again.
 SessionHook = Callable[[], Awaitable[bool]]
@@ -141,6 +151,8 @@ class BatchEngine:
         self._awake = StayAwake()
         #: Wall-clock start and end of the last sleep the engine noticed, for the Matrix.
         self._last_pause: tuple[datetime, datetime] | None = None
+        #: When queued work with no task was last swept up. Zero so the first tick sweeps.
+        self._last_orphan_sweep = 0.0
 
     # -- lifecycle -------------------------------------------------------
 
@@ -186,7 +198,7 @@ class BatchEngine:
         self,
         requests: list[SimulationRequest],
         *,
-        task: str = "manual",
+        task: str = MANUAL_TASK,
         skip_duplicates: bool = True,
     ) -> dict[str, Any]:
         """Accept work. Returns what was queued and what was skipped as a duplicate.
@@ -303,6 +315,83 @@ class BatchEngine:
             log.info("engine.queue_dropped", task=task, count=dropped)
             await self._notify()
         return dropped
+
+    async def disown_orphans(self) -> int:
+        """Cancel queued work whose task no longer exists. Returns how many.
+
+        Queued rows outlive the task that made them — a study deleted, a crash between
+        queueing and recording it — and nothing downstream notices. Dispatch selects on
+        status alone, and :func:`allocate_slots` treats a task with no quota row as
+        *unconstrained*, so orphaned work is sent as fast as the slots allow, spends the
+        day's quota, and produces Alphas no task will ever score. On screen it looks like
+        the app simulating on its own: an empty Tasks table, no cores assigned, and the
+        day's allowance draining anyway.
+
+        Cancelled rather than skipped, because a row left QUEUED is invisible in a
+        different way — it would sit in the backlog for good and the count would never
+        explain itself.
+        """
+        async with self.db.session() as session:
+            result = await session.execute(
+                update(SimulationRecord)
+                .where(
+                    SimulationRecord.status == SimStatus.QUEUED,
+                    # The documented task for work nobody owns; it has no study by design.
+                    SimulationRecord.task != MANUAL_TASK,
+                    SimulationRecord.task.not_in(select(Study.task)),
+                )
+                .values(
+                    status=SimStatus.CANCELLED,
+                    finished_at=utcnow(),
+                    message="The task that queued this no longer exists, so it was not sent.",
+                )
+            )
+            dropped = result.rowcount or 0  # pyright: ignore[reportAttributeAccessIssue]
+        if dropped:
+            log.warning("engine.orphans_disowned", count=dropped)
+            await self._notify()
+        return dropped
+
+    async def abandon(self, task: str) -> int:
+        """Cancel everything ``task`` still has out on BRAIN. Returns how many were asked.
+
+        Best effort on purpose. A simulation BRAIN has already finished refuses to cancel,
+        and marking it cancelled here would hide an alpha that exists — so the refusal is
+        left to the next poll, which records what really happened. The *task* ends either
+        way: a task is a local scheduling object, and a simulation that outlives it still
+        lands in the vault with the quota it already spent.
+        """
+        async with self.db.session() as session:
+            rows = list(
+                (
+                    await session.scalars(
+                        select(SimulationRecord.id).where(
+                            SimulationRecord.task == task,
+                            SimulationRecord.status.in_(
+                                [SimStatus.PENDING, SimStatus.RUNNING, SimStatus.ORPHANED]
+                            ),
+                        )
+                    )
+                ).all()
+            )
+        # Together rather than one after another: this runs while the task's lock is held,
+        # and a task with fifty simulations out would otherwise hold it for the sum of fifty
+        # round trips. Bounded, because BRAIN meters this endpoint like any other.
+        gate = asyncio.Semaphore(ABANDON_AT_ONCE)
+
+        async def stop(record_id: int) -> None:
+            async with gate:
+                await self.tracker.cancel(record_id)
+
+        outcomes = await asyncio.gather(*(stop(r) for r in rows), return_exceptions=True)
+        for record_id, outcome in zip(rows, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                # One refusal must not strand the rest; the poll records what really happened.
+                log.warning("engine.cancel_failed", record_id=record_id, error=str(outcome))
+        if rows:
+            log.info("engine.task_abandoned", task=task, count=len(rows))
+            await self._notify()
+        return len(rows)
 
     # -- quotas ----------------------------------------------------------
 
@@ -428,6 +517,15 @@ class BatchEngine:
                 return 0
             self._session_lost = False
             log.info("engine.session_back")
+
+        # Before anything is chosen to send. A task can be orphaned mid-session, and what it
+        # left behind is exactly the work that would be sent hardest — nothing caps it. Not
+        # every tick, though: it is a write transaction, and orphaning is rare enough that a
+        # minute of a stray task sending is the cost of not writing every two seconds.
+        now = time.monotonic()
+        if now - self._last_orphan_sweep >= ORPHAN_SWEEP_SECONDS:
+            self._last_orphan_sweep = now
+            await self.disown_orphans()
 
         async with self.db.session() as session:
             in_flight = await self._in_flight_by_task(session)

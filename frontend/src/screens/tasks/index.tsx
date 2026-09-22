@@ -455,6 +455,15 @@ function confirmCopy(a: Act, fresh: number): { title: string; label: string; bod
         }
       return { title: 'Run this task?', label: 'Run Task' }
     case 'stop':
+      // The second press, on a task that has been stopping and has not stopped. It says
+      // what it will cost, because forcing gives up on simulations the quota already paid
+      // for — which is the right trade only once the ordinary stop has failed.
+      if (a.task.stopping)
+        return {
+          title: 'Force this task to stop?',
+          label: 'Force Stop',
+          body: 'It is waiting on simulations that have not come back. Forcing cancels what it can on BRAIN, ends the task and frees its cores. Any simulation that finishes anyway is still kept in Alphas.',
+        }
       return {
         title: 'Stop this task?',
         label: 'Stop Task',
@@ -522,12 +531,15 @@ function Actions({
           <PauseIcon />
         </Button>
       )}
-      {(status === 'RUNNING' || status === 'PAUSED' || status === 'QUEUED') && !stopping && (
+      {/* Stays through `stopping`, unlike Pause and Edit. A task waiting on a simulation
+          that never comes back is exactly when someone needs this button, and hiding it
+          left them with a task holding cores and nothing on screen to press. */}
+      {(status === 'RUNNING' || status === 'PAUSED' || status === 'QUEUED') && (
         <Button
           size="icon-sm"
-          variant="ghost"
-          aria-label="Stop"
-          title="Stop"
+          variant={stopping ? 'danger' : 'ghost'}
+          aria-label={stopping ? 'Force stop' : 'Stop'}
+          title={stopping ? 'Force stop' : 'Stop'}
           onClick={() => onAct('stop')}
         >
           <SquareIcon />

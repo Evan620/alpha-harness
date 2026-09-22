@@ -128,6 +128,21 @@ ALPHA_METRICS: dict[str, str] = {
 #: Anything past UNSUBMITTED (ACTIVE, DECOMMISSIONED, ...) has been submitted.
 SUBMITTED = "(a.status IS NOT NULL AND a.status <> 'UNSUBMITTED')"
 
+#: Types that can seed the Evolution Lab.
+#:
+#: An ``RA_CHILD`` is an ordinary Alpha that happens to have arrived through a
+#: region-agnostic run: it carries one real region, that region's own universe, its own
+#: Sharpe and Fitness, and an expression. Excluding it left anyone running region-agnostic
+#: simulations with a vault full of Alphas that Evolution refused to breed from.
+#:
+#: The ``RA_PARENT`` is the one to keep out, and not because of its type — it is a summary
+#: of its children with region ``ALL`` and no metrics of its own (measured: Sharpe and
+#: Fitness both null), so there is nothing to score it by and no single market to breed in.
+EVOLVABLE = "(coalesce(a.sim_type, 'REGULAR') IN ('REGULAR', 'RA_CHILD'))"
+
+#: The same rule, for a row already in hand.
+EVOLVABLE_TYPES = frozenset({"REGULAR", "RA_CHILD"})
+
 
 def _iso(value: Any) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else None
@@ -360,14 +375,18 @@ class AlphaVault:
         )
 
     async def evolvable_markets(self) -> list[dict[str, Any]]:
-        """Equity scopes holding unsubmitted regular alphas with an expression to breed from."""
+        """Equity scopes holding unsubmitted alphas the Evolution Lab would take as seeds.
+
+        Fitness included, as the lab requires it: a market counted without it advertises
+        seeds that Auto Select then cannot use.
+        """
         return await self.catalog.query(
             f"""
             SELECT a.region, a.delay, a.universe, count(*) AS alphas FROM alpha a
             WHERE coalesce(a.instrument_type, 'EQUITY') = 'EQUITY'
               AND a.region IS NOT NULL AND a.delay IS NOT NULL AND a.universe IS NOT NULL
-              AND NOT {SUBMITTED} AND coalesce(a.sim_type, 'REGULAR') = 'REGULAR'
-              AND a.expression IS NOT NULL
+              AND NOT {SUBMITTED} AND {EVOLVABLE}
+              AND a.expression IS NOT NULL AND a.fitness IS NOT NULL
             GROUP BY 1, 2, 3
             ORDER BY alphas DESC
             """  # noqa: S608
@@ -409,11 +428,31 @@ class AlphaVault:
         minimum: dict[str, float] | None = None,
         maximum: dict[str, float] | None = None,
         search: str | None = None,
+        evolvable: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> dict[str, Any]:
-        """One page of the Simulations table: sorted, filtered, with the total."""
+        """One page of the Simulations table: sorted, filtered, with the total.
+
+        ``evolvable`` keeps only what the Evolution Lab can breed from. The same predicate
+        the lab itself enforces, so the table offering an Alpha and the lab accepting it can
+        never disagree — a SuperAlpha carries a combo expression rather than a regular one,
+        and picking one only to be told later that it cannot be a seed is the table's fault,
+        not the user's.
+        """
         clauses = ["a.date_created IS NOT NULL", SUBMITTED if submitted else f"NOT {SUBMITTED}"]
+        if evolvable:
+            # Every condition ``ga.seed_problem`` and ``ga.auto_seeds`` apply, not just the
+            # type: an Alpha with no Fitness is refused there too, so offering it here would
+            # be the same lie in a different place.
+            clauses.extend(
+                [
+                    EVOLVABLE,
+                    "coalesce(a.instrument_type, 'EQUITY') = 'EQUITY'",
+                    "a.expression IS NOT NULL",
+                    "a.fitness IS NOT NULL",
+                ]
+            )
         params: list[Any] = []
         for column, values in (("region", regions), ("delay", delays), ("universe", universes)):
             if values:

@@ -17,6 +17,7 @@ import structlog
 from sqlalchemy import select
 
 from ..db.models import ApiKey, utcnow
+from . import providers
 from .budget import Headroom, Ledger, seconds_until_reset
 
 if TYPE_CHECKING:
@@ -38,9 +39,14 @@ class LLMError(Exception):
 class NoKeysError(LLMError):
     def __init__(self, provider: str | None = None) -> None:
         if provider and provider != "google":
+            known = providers.get(provider)
+            tail = (
+                "That one bills your own account; the free providers above it do not."
+                if known.paid
+                else "Most of the providers listed there are free and need no card."
+            )
             super().__init__(
-                f"No {provider} key has been added yet. Open AI Integration to add one — "
-                "every provider listed there is free and needs no card."
+                f"No {known.label} key has been added yet. Open AI Integration. {tail}"
             )
             return
         super().__init__(
@@ -99,6 +105,7 @@ def serialise(row: ApiKey, usage: list[dict[str, Any]] | None = None) -> dict[st
         "provider": row.provider,
         "hint": row.hint,
         "enabled": row.enabled,
+        "dailyLimit": row.daily_limit,
         "lastOkAt": row.last_ok_at.isoformat() if row.last_ok_at else None,
         "lastError": row.last_error,
         "createdAt": row.created_at.isoformat() if row.created_at else None,
@@ -116,10 +123,26 @@ class KeyStore:
 
     # -- storage ---------------------------------------------------------
 
-    async def add(self, key: str, label: str | None = None, provider: str = "google") -> ApiKey:
+    async def add(
+        self,
+        key: str,
+        label: str | None = None,
+        provider: str = "google",
+        daily_limit: int | None = None,
+    ) -> ApiKey:
         clean = key.strip()
         if not clean:
             raise LLMError("That key is empty.")
+        # A free tier stops on its own; a paid account stops when told to. Refusing the key
+        # outright is the only point at which the app can be sure it was told — afterwards
+        # the key is stored, and anything that reads it can spend money.
+        if providers.get(provider).paid and not daily_limit:
+            raise LLMError(
+                f"Keys for {providers.get(provider).label} bill your own account, so they "
+                "need a daily request cap. Set one and add the key again."
+            )
+        if daily_limit is not None and daily_limit < 1:
+            raise LLMError("A daily cap has to be at least one request.")
         print_ = fingerprint(clean)
 
         async with self.db.session() as session:
@@ -136,6 +159,7 @@ class KeyStore:
                 key_sealed=self.sealer.seal(clean, context=KEY_CONTEXT),
                 hint=hint(clean),
                 fingerprint=print_,
+                daily_limit=daily_limit,
             )
             session.add(row)
             await session.commit()
@@ -158,12 +182,34 @@ class KeyStore:
                 raise LLMError(f"No key {key_id}.")
             return self.sealer.open(row.key_sealed, context=KEY_CONTEXT)
 
-    async def set_enabled(self, key_id: int, enabled: bool) -> ApiKey:
+    async def set_enabled(
+        self, key_id: int, enabled: bool, cap: int | None = None, *, clear: bool = False
+    ) -> ApiKey:
+        """Turn a key on or off, and optionally move its daily cap.
+
+        The cap is editable because it is a spending limit: finding out it is too high is
+        exactly the moment someone needs to lower it, and deleting and re-adding the key to
+        do that is not a thing anyone will manage calmly. ``clear`` removes it entirely,
+        which omitting ``cap`` cannot say — that already means "leave it alone".
+        """
+        if cap is not None and cap < 1:
+            raise LLMError("A daily cap has to be at least one request.")
         async with self.db.session() as session:
             row = await session.get(ApiKey, key_id)
             if row is None:
                 raise LLMError(f"No key {key_id}.")
+            if clear and providers.get(row.provider).paid:
+                # The cap is the only thing between this key and an open-ended bill. It can
+                # be moved, never removed.
+                raise LLMError(
+                    f"Keys for {providers.get(row.provider).label} bill your own account, "
+                    "so the daily cap cannot be removed. Raise it instead."
+                )
             row.enabled = enabled
+            if clear:
+                row.daily_limit = None
+            elif cap is not None:
+                row.daily_limit = cap
             await session.commit()
             await session.refresh(row)
         return row
@@ -206,7 +252,9 @@ class KeyStore:
             raise NoKeysError(model.provider)
 
         states: list[Headroom] = [
-            await self.ledger.allows(row.id, model, estimated_tokens=estimated_tokens)
+            await self.ledger.allows(
+                row.id, model, estimated_tokens=estimated_tokens, cap=row.daily_limit
+            )
             for row in rows
         ]
 
@@ -233,15 +281,22 @@ class KeyStore:
                 continue
             usable = [r for r in rows if r.enabled and r.provider == model.provider]
             remaining = 0
+            # Per key, because a paid key's ceiling is the user's own and two of them need
+            # not agree. For the free providers every key shares the model's number and this
+            # collapses back to it.
+            # Starts at the model's own number so a model whose keys are all disabled still
+            # shows what it would allow, rather than a ceiling of zero.
+            per_key = model.rpd
             for row in usable:
-                state = await self.ledger.headroom(row.id, model)
+                state = await self.ledger.headroom(row.id, model, cap=row.daily_limit)
                 remaining += state.daily_remaining
+                per_key = max(per_key, state.requests_per_day)
             budget.append(
                 {
                     "model": model.id,
                     "label": model.label,
                     "provider": model.provider,
-                    "perKeyPerDay": model.rpd,
+                    "perKeyPerDay": per_key,
                     "remainingToday": remaining,
                     "bulk": model.bulk,
                 }

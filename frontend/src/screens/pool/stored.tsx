@@ -215,6 +215,10 @@ export function Stored({ onOpen }: { onOpen: (alphaId: string) => void }) {
 
   const body: AlphaPageRequest = {
     submitted: market ? false : submitted === 'yes',
+    // While picking seeds, hide what the lab would refuse. A SuperAlpha's expression is a
+    // combo, not a regular expression, so it can never be bred from — offering it here and
+    // rejecting it on submit is the table misleading the user.
+    evolvable: Boolean(market),
     sort_by: sort.key as AlphaSortKey,
     sort_desc: sort.desc,
     regions: market ? [market.region] : regions.length ? regions : null,

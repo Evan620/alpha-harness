@@ -10,6 +10,7 @@ open-ended or undocumented blobs the callers read selectively.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -394,6 +395,28 @@ class BrainEndpoints:
     #: A region's datasets take eight to sixteen seconds, longer than the client's
     #: ordinary timeout allows for. BRAIN itself gives up at thirty with a 504.
     ALL_SETS_TIMEOUT = 45.0
+
+    async def list_competitions(self, *, mine: bool = False) -> list[dict[str, Any]]:
+        """Competitions that have not ended, or the ones this account is in.
+
+        ``mine`` answers from ``/users/self/competitions``, which carries the enrolment and
+        the account's own leaderboard row; the open list carries neither. Both are needed:
+        one says what is running, the other says whether you are in it.
+
+        The date filter is UTC and uses BRAIN's ``!<`` ("not less than") operator, unlike
+        the alpha filters, which are US Eastern.
+        """
+        path, params = "/users/self/competitions", {}
+        if not mine:
+            # In ``params``, never inlined in the path: the client meters by path, so a
+            # query string carrying a timestamp would mint a fresh unmetered bucket on
+            # every call and slip past this endpoint's own measured pacing.
+            now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            path = "/competitions"
+            params = {"limit": 50, "offset": 0, "endDate!<": now}
+        body = (await self.client.request_retrying("GET", path, params=params)).body
+        rows = body.get("results") if isinstance(body, dict) else body
+        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
     async def list_data_sets_all(self, **params: Any) -> list[DataSet]:
         """Every dataset matching a scope, however partial that scope is.

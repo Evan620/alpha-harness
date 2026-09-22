@@ -23,6 +23,8 @@ export interface AddKeyRequest {
   key: string
   label?: string | null
   provider?: string
+  /** Daily request ceiling. The backend refuses a paid provider's key without one. */
+  daily_limit?: number | null
 }
 
 export type KeyCheck = Schemas['KeyWorks'] | Schemas['KeyFailed']
@@ -78,8 +80,14 @@ export const llm = {
   keys: () => http.get<LLMKeyStatus>('/api/llm/keys'),
   /** 400 llm_error for a duplicate key. */
   addKey: (body: AddKeyRequest) => http.post<LLMKey>('/api/llm/keys', body),
-  setEnabled: (id: number, enabled: boolean) =>
-    http.put<LLMKey>(`/api/llm/keys/${id}`, { enabled }),
+  setEnabled: (id: number, enabled: boolean, dailyLimit?: number | null) =>
+    // snake_case, like every other body here: the backend reads `daily_limit` and silently
+    // ignores anything else, so a camelCase key would arrive as "no cap given".
+    http.put<LLMKey>(`/api/llm/keys/${id}`, {
+      enabled,
+      daily_limit: dailyLimit ?? undefined,
+      clear_daily_limit: dailyLimit === null,
+    }),
   removeKey: (id: number) => http.del<void>(`/api/llm/keys/${id}`),
   checkKey: (id: number) => http.post<KeyCheck>(`/api/llm/keys/${id}/check`),
   checkAll: () => http.post<KeyCheck[]>('/api/llm/keys/check'),

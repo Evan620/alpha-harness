@@ -37,8 +37,11 @@ class Provider:
     onboarding_url: str
     #: What a key from this provider looks like, so a pasted wrong one is caught early.
     key_hint: str
-    #: What the free tier actually gives you, in plain words.
-    free_note: str
+    #: What this tier actually gives you, in plain words.
+    tier_note: str
+    #: True for a provider that bills the user. Kept apart everywhere it is shown, and its
+    #: keys are refused without a daily cap — see :meth:`KeyStore.add`.
+    paid: bool = False
     models: tuple[ModelInfo, ...] = ()
 
     @property
@@ -52,7 +55,8 @@ class Provider:
             "baseUrl": self.base_url,
             "onboardingUrl": self.onboarding_url,
             "keyHint": self.key_hint,
-            "freeNote": self.free_note,
+            "tierNote": self.tier_note,
+            "paid": self.paid,
             "openaiCompatible": self.openai_compatible,
             "models": [m.to_dict() for m in self.models],
         }
@@ -91,7 +95,7 @@ PROVIDERS: dict[str, Provider] = {
         base_url="",
         onboarding_url="https://aistudio.google.com/apikey",
         key_hint="AIza…",
-        free_note=(
+        tier_note=(
             "Free with a Google account, no card. The Lite models give five hundred "
             "requests a day; the full Flash models give twenty."
         ),
@@ -105,7 +109,7 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.groq.com/openai/v1",
         onboarding_url="https://console.groq.com/keys",
         key_hint="gsk_…",
-        free_note="Free, no card. The fastest answers of anything on this list.",
+        tier_note="Free, no card. The fastest answers of anything on this list.",
         models=(
             _model(
                 "llama-3.3-70b-versatile",
@@ -133,7 +137,7 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.cerebras.ai/v1",
         onboarding_url="https://cloud.cerebras.ai/",
         key_hint="csk-…",
-        free_note="Free tier, no card. Very fast, with a generous daily allowance.",
+        tier_note="Free tier, no card. Very fast, with a generous daily allowance.",
         models=(
             _model(
                 "llama-3.3-70b",
@@ -162,7 +166,7 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://openrouter.ai/api/v1",
         onboarding_url="https://openrouter.ai/keys",
         key_hint="sk-or-…",
-        free_note=(
+        tier_note=(
             "One key, many models. Anything whose name ends in ':free' costs nothing, "
             "with a shared daily cap across them."
         ),
@@ -192,7 +196,7 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://integrate.api.nvidia.com/v1",
         onboarding_url="https://build.nvidia.com/",
         key_hint="nvapi-…",
-        free_note="Free credits with an NVIDIA account, no card.",
+        tier_note="Free credits with an NVIDIA account, no card.",
         models=(
             _model(
                 "meta/llama-3.3-70b-instruct",
@@ -211,7 +215,7 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.mistral.ai/v1",
         onboarding_url="https://console.mistral.ai/api-keys/",
         key_hint="…",
-        free_note="Free experiment tier, no card. Rate limited rather than capped.",
+        tier_note="Free experiment tier, no card. Rate limited rather than capped.",
         models=(
             _model(
                 "mistral-small-latest",
@@ -239,7 +243,7 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://models.github.ai/inference",
         onboarding_url="https://github.com/settings/tokens",
         key_hint="ghp_… or github_pat_…",
-        free_note=(
+        tier_note=(
             "Free with any GitHub account — use a personal access token with the "
             "models scope. Low daily limits, but nothing new to sign up for."
         ),
@@ -261,7 +265,7 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://router.huggingface.co/v1",
         onboarding_url="https://huggingface.co/settings/tokens",
         key_hint="hf_…",
-        free_note="Free monthly credits with a Hugging Face account, no card.",
+        tier_note="Free monthly credits with a Hugging Face account, no card.",
         models=(
             _model(
                 "meta-llama/Llama-3.3-70B-Instruct",
@@ -274,15 +278,95 @@ PROVIDERS: dict[str, Provider] = {
             ),
         ),
     ),
+    # --- bring your own, and your own bill ---------------------------------------------
+    #
+    # Everything above is free because the assistant is optional and a card turns an
+    # optional convenience into a purchase decision. These two are for the user who already
+    # pays for one of them and would rather spend that than a free tier that runs out by
+    # lunchtime. They are kept behind their own heading in the UI so the default stays
+    # "no card", and a key for either is refused without a daily request cap: the free
+    # providers stop on their own, and these stop only when told to.
+    "openai": Provider(
+        id="openai",
+        label="OpenAI",
+        base_url="https://api.openai.com/v1",
+        onboarding_url="https://platform.openai.com/api-keys",
+        key_hint="sk-…",
+        tier_note=(
+            "Your own OpenAI account — billed to you, not free. The models appear once the "
+            "key has been checked, because which ones an account can reach depends on it."
+        ),
+        paid=True,
+        # Discovered from the key's own ``GET /models`` rather than transcribed: OpenAI's
+        # roster moves, and a stale id here would fail with "model not found" on a key that
+        # is perfectly good.
+        models=(),
+    ),
+    "anthropic": Provider(
+        id="anthropic",
+        # Anthropic's OpenAI-compatible endpoint, which takes the same Bearer token and the
+        # same ``/chat/completions`` shape, so no second client is needed. Anthropic calls
+        # it a compatibility layer for evaluation rather than a production path; the ways it
+        # differs that matter here are that ``response_format`` is ignored — callers already
+        # ask for JSON in the prompt and parse defensively — and that thinking output is not
+        # returned, which nothing here reads.
+        label="Anthropic Claude",
+        base_url="https://api.anthropic.com/v1",
+        onboarding_url="https://platform.claude.com/settings/keys",
+        key_hint="sk-ant-…",
+        tier_note="Your own Anthropic account — billed to you, not free.",
+        paid=True,
+        models=(
+            _model(
+                "claude-sonnet-5",
+                "Claude Sonnet 5",
+                "anthropic",
+                rpm=50,
+                rpd=0,
+                summary="The balanced choice. Fast enough for chat, strong on hard questions.",
+                recommended=True,
+            ),
+            _model(
+                "claude-opus-5",
+                "Claude Opus 5",
+                "anthropic",
+                rpm=50,
+                rpd=0,
+                summary="The most capable, and the most expensive. For questions worth it.",
+            ),
+            _model(
+                "claude-haiku-4-5-20251001",
+                "Claude Haiku 4.5",
+                "anthropic",
+                rpm=50,
+                rpd=0,
+                summary="Small and cheap. The one to point bulk work at.",
+                bulk=True,
+            ),
+        ),
+    ),
 }
 
 DEFAULT_PROVIDER = "google"
 
+#: ``rpd`` on a paid model. There is no daily ceiling but the user's own, so the key's cap
+#: is what a request is measured against — see :meth:`Ledger.headroom`.
+UNCAPPED = 0
+
 #: Said once, where the numbers are shown, rather than repeated per provider.
 LIMITS_NOTE = (
-    "Every provider here is free and needs no card. The daily limits are transcribed "
+    "The providers above are free and need no card. The daily limits are transcribed "
     "from each provider's own documentation and will drift — they are kept deliberately "
     "low, because a budget guessed high spends your day before you notice it was wrong."
+)
+
+#: Said once, under the paid heading. The cap is the whole point: a free tier stops by
+#: itself and a paid account does not, so the app will not hold one of these keys until it
+#: has been told where to stop.
+PAID_NOTE = (
+    "These bill your own account. Nothing here is needed — every provider above is free — "
+    "but a key you already pay for does not run out at lunchtime. You set a daily request "
+    "cap when you add one, and Alpha Harness stops at it."
 )
 
 
@@ -297,12 +381,16 @@ def get(provider_id: str | None) -> Provider:
 
 
 def catalogue() -> dict[str, Any]:
-    """Every provider, Google first, for the screen where a key is added."""
-    ordered = [PROVIDERS[DEFAULT_PROVIDER]] + [
-        p for p in PROVIDERS.values() if p.id != DEFAULT_PROVIDER
+    """Every provider, Google first and the paid ones last, for the screen where a key is
+    added. The order is the argument: free is the default because it is first and because
+    nothing below the fold is needed to use the app."""
+    free = [PROVIDERS[DEFAULT_PROVIDER]] + [
+        p for p in PROVIDERS.values() if p.id != DEFAULT_PROVIDER and not p.paid
     ]
+    paid = [p for p in PROVIDERS.values() if p.paid]
     return {
-        "providers": [p.to_dict() for p in ordered],
+        "providers": [p.to_dict() for p in (*free, *paid)],
         "default": DEFAULT_PROVIDER,
         "note": LIMITS_NOTE,
+        "paidNote": PAID_NOTE,
     }

@@ -385,11 +385,25 @@ def _spent(rows: Sequence[Any]) -> list[float | None]:
     return out
 
 
-async def stop_task(optimizer: Optimizer, row: Study) -> None:
-    """Finish a task early. Simulations already sent still finish and are scored."""
+async def stop_task(optimizer: Optimizer, row: Study, *, force: bool = False) -> None:
+    """Finish a task early. Simulations already sent still finish and are scored.
+
+    ``force`` is the second press, for a task that has been stopping and has not stopped.
+    An ordinary stop is cooperative: it waits for what is already out on BRAIN, which is
+    right, because that quota is spent either way. But it relies on every outstanding
+    simulation reaching a terminal state, and one that never does — BRAIN loses it, a poll
+    never resolves — holds the task RUNNING and its cores for good, with nothing on screen
+    to press but the button that already did nothing.
+
+    So a forced stop cancels what it can on BRAIN, closes the trials whatever their
+    simulations are doing, and ends the task. Anything BRAIN keeps running still lands in
+    the vault; it simply stops holding a task open.
+    """
     async with optimizer.lock(row.id):
         await optimizer.engine.drop_queued(row.task)
-        await prune_unsent(optimizer, row.id)
+        if force:
+            await optimizer.engine.abandon(row.task)
+        await prune_unsent(optimizer, row.id, everything=force)
         counts = await optimizer.counts(row.id)
         out = counts.get(TrialState.QUEUED, 0) + counts.get(TrialState.RUNNING, 0)
         async with optimizer.db.session() as session:
@@ -471,11 +485,15 @@ async def finish(optimizer: Optimizer, study_id: int, status: StudyStatus, messa
     await optimizer.notify()
 
 
-async def prune_unsent(optimizer: Optimizer, study_id: int) -> int:
+async def prune_unsent(optimizer: Optimizer, study_id: int, *, everything: bool = False) -> int:
     """Mark trials whose simulation was taken off the queue as never run.
 
     They spent nothing, so they are pruned rather than failed: failing them would teach the
     search that these points score badly.
+
+    ``everything`` closes every open trial regardless of what its simulation is doing, for
+    a forced stop. Pruned rather than failed for the same reason: an unscored point is not
+    evidence that the point is bad.
     """
     from optuna.trial import TrialState as OptunaState
 
@@ -505,10 +523,15 @@ async def prune_unsent(optimizer: Optimizer, study_id: int) -> int:
             ).all()
         )
         for trial in open_trials:
-            if trial.simulation_record_id and trial.simulation_record_id not in cancelled:
+            unsent = not trial.simulation_record_id or trial.simulation_record_id in cancelled
+            if not (unsent or everything):
                 continue
             trial.state = TrialState.PRUNED
-            trial.message = "Taken off the queue before it was sent."
+            trial.message = (
+                "Taken off the queue before it was sent."
+                if unsent
+                else "The task was stopped before this finished."
+            )
             trial.finished_at = utcnow()
             pruned += 1
             optuna_trial = live.pop(trial.number, None)

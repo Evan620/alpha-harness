@@ -267,7 +267,9 @@ class LLMService:
                 if limited:
                     # Google is the authority: mark this pair spent and rotate rather than
                     # retrying into a limit we evidently mis-tracked.
-                    await self.ledger.penalise(key_id, model, daily=daily)
+                    await self.ledger.penalise(
+                        key_id, model, daily=daily, cap=row.daily_limit if row else None
+                    )
                     self.forget(key_id)
                     log.warning("llm.rate_limited", key_id=key_id, model=model.id, daily=daily)
                     continue

@@ -22,6 +22,7 @@ from sqlalchemy import select
 
 from ..brain.errors import BrainAuthError, BrainError
 from ..brain.filters import AlphaQuery
+from ..brain.schemas import produced_type
 from ..db.models import SimStatus, SimulationRecord, utcnow
 from .lifecycle import remember, transition
 
@@ -80,7 +81,9 @@ def matches(payload: dict[str, Any], alpha: dict[str, Any]) -> bool:
     Expressions are compared with whitespace collapsed, since the stored code gains a
     trailing newline.
     """
-    if payload.get("type", "REGULAR") != alpha.get("type", "REGULAR"):
+    # Translated, not compared as-is: a region-agnostic request comes back as an RA parent,
+    # so the literal comparison refused to adopt every orphaned RA simulation there was.
+    if produced_type(payload.get("type", "REGULAR")) != alpha.get("type", "REGULAR"):
         return False
     for key in _EXPRESSION_KEYS:
         if key in payload and squash(payload[key]) != squash(alpha.get(key)):

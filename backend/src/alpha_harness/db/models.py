@@ -552,6 +552,9 @@ class ApiKey(Base):
     hint: Mapped[str] = mapped_column(String(32))
     fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
     enabled: Mapped[bool] = mapped_column(default=True)
+    #: The user's own daily request ceiling, overriding the model's when set. Required for a
+    #: paid provider, which has no ceiling of its own, and optional for a free one.
+    daily_limit: Mapped[int | None] = mapped_column(nullable=True)
     last_ok_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)

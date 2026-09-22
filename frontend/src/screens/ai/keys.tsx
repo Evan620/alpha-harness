@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { errorMessage } from '@/api/http'
 import { DASH, fmt } from '@/lib/format'
 import { type LLMKey, llm, quotaDay } from '@/screens/ai/api'
-import { Badge, Button, Checkbox, Empty, ErrorNotice, LINK, Panel, Skeleton } from '@/ui/kit'
+import { Badge, Button, Checkbox, Empty, ErrorNotice, Input, LINK, Panel, Skeleton } from '@/ui/kit'
 import { Confirm } from '@/ui/overlay'
 import { type Column, DataTable } from '@/ui/table'
 import { useInvalidateKeys, useKeys, useProviderLabel } from './shared'
@@ -92,6 +92,13 @@ export function Keys() {
       cell: (k) => <KeyStatus apiKey={k} />,
     },
     {
+      key: 'cap',
+      header: 'Daily cap',
+      width: '110px',
+      align: 'right',
+      cell: (k) => <CapCell apiKey={k} />,
+    },
+    {
       key: 'requests',
       header: 'Requests today',
       width: '120px',
@@ -164,6 +171,71 @@ function EnabledCell({ apiKey: k }: { apiKey: LLMKey }) {
       checked={k.enabled}
       disabled={toggle.isPending}
       onChange={(next) => toggle.mutate(next)}
+    />
+  )
+}
+
+/** The key's own daily ceiling, editable in place.
+ *
+ * Editable because it is a spending limit on a paid account: the moment someone wants to
+ * lower one is the moment they have found it too high, and "delete the key and add it
+ * again" is not what anyone wants to hear then. A key with no cap of its own uses the
+ * model's, which is what every free provider already publishes.
+ */
+function CapCell({ apiKey: k }: { apiKey: LLMKey }) {
+  const invalidate = useInvalidateKeys()
+  const [draft, setDraft] = useState(String(k.dailyLimit ?? ''))
+  // Follows the row when the table refetches, which `useState` alone does not: the cap can
+  // change under this cell from another tab, or from the mutation below.
+  const [seen, setSeen] = useState(k.dailyLimit)
+  if (seen !== k.dailyLimit) {
+    setSeen(k.dailyLimit)
+    setDraft(String(k.dailyLimit ?? ''))
+  }
+  const save = useMutation({
+    // null clears it: a cap you cannot take off is a trap on a free key, which never
+    // needed one. A paid key's cap is refused by the backend, which says so.
+    mutationFn: (cap: number | null) => llm.setEnabled(k.id, k.enabled, cap),
+    onSuccess: (updated) => {
+      toast.success(
+        updated.dailyLimit === null
+          ? `${nameOf(k)} has no daily cap`
+          : `${nameOf(k)} capped at ${fmt.int(updated.dailyLimit)} requests a day`,
+      )
+      invalidate()
+    },
+    onError: (e) => {
+      toast.error(errorMessage(e))
+      setDraft(String(k.dailyLimit ?? ''))
+    },
+  })
+
+  const commit = () => {
+    const clean = draft.trim()
+    if (clean === '') {
+      if (k.dailyLimit !== null) save.mutate(null)
+      return
+    }
+    const next = Number.parseInt(clean, 10)
+    if (!Number.isFinite(next) || next < 1 || next === k.dailyLimit) {
+      setDraft(String(k.dailyLimit ?? ''))
+      return
+    }
+    save.mutate(next)
+  }
+
+  return (
+    <Input
+      type="number"
+      min={1}
+      className="h-7 w-full text-right"
+      aria-label={`Daily cap for ${nameOf(k)}`}
+      placeholder="None"
+      value={draft}
+      disabled={save.isPending}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
     />
   )
 }

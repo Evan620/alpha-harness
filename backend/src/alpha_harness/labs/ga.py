@@ -30,7 +30,7 @@ from sqlalchemy import String, func, select, type_coerce
 
 from ..brain.schemas import TEST_PERIOD, SimulationRequest, SimulationSettings
 from ..db.models import Study, Trial, TrialState
-from ..vault.store import SUBMITTED
+from ..vault.store import EVOLVABLE, EVOLVABLE_TYPES, SUBMITTED
 from ..vault.yields import IGNORED_CHECKS
 from . import search, template
 from .fastexpr import (
@@ -637,8 +637,16 @@ def seed_problem(
         return "Not stored here. Sync from BRAIN first."
     if row.get("status") and str(row["status"]).upper() != "UNSUBMITTED":
         return "Already submitted."
-    if (row.get("sim_type") or "REGULAR") != "REGULAR":
-        return "Only regular Alphas can be seeds."
+    kind = str(row.get("sim_type") or "REGULAR").upper()
+    if kind not in EVOLVABLE_TYPES:
+        if kind == "RA_PARENT":
+            # It summarises its children and has no Sharpe or Fitness of its own; the
+            # children are seeds like any other Alpha.
+            return (
+                "A region-agnostic parent has no metrics of its own. Seed from one of its children."
+            )
+        # A SuperAlpha, say: its expression is a combo, not a regular expression.
+        return f"A {kind} Alpha cannot be a seed: its expression is not a regular expression."
     if (row.get("region"), row.get("delay"), row.get("universe")) != (region, delay, universe):
         return f"It ran in {row.get('region')} D{row.get('delay')} {row.get('universe')}."
     if row.get("fitness") is None:
@@ -675,7 +683,7 @@ async def auto_seeds(
         SELECT a.* FROM alpha a
         WHERE coalesce(a.instrument_type, 'EQUITY') = 'EQUITY'
           AND a.region = ? AND a.delay = ? AND a.universe = ?
-          AND NOT {SUBMITTED} AND coalesce(a.sim_type, 'REGULAR') = 'REGULAR'
+          AND NOT {SUBMITTED} AND {EVOLVABLE}
           AND a.expression IS NOT NULL AND a.fitness IS NOT NULL AND a.sharpe > 0
         """,  # noqa: S608
         [region, delay, universe],

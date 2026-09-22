@@ -217,6 +217,8 @@ class AlphaPageRequest(BaseModel):
     minimum: dict[str, float] = Field(default_factory=dict)
     maximum: dict[str, float] = Field(default_factory=dict)
     search: str | None = None
+    #: Only Alphas the Evolution Lab can breed from, for when this table is a seed picker.
+    evolvable: bool = False
     limit: int = Field(default=100, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
 

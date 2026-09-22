@@ -598,6 +598,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/competitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live
+         * @description Every competition still running, with this account's enrolment folded in.
+         *
+         *     Two reads, because neither answers alone: the open list says what is running, and only
+         *     ``/users/self/competitions`` carries the enrolment and the account's own board row. A
+         *     competition the user is in wins, so its richer row is the one shown.
+         */
+        get: operations["live_api_competitions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/evolution-lab/options": {
         parameters: {
             query?: never;
@@ -852,6 +876,11 @@ export interface paths {
         /**
          * Stop
          * @description Finish a task early. Simulations already sent still finish and are scored.
+         *
+         *     Pressed on a task that is *already* stopping, it forces: what is out on BRAIN is
+         *     cancelled where it can be, the trials close whatever their simulations are doing, and
+         *     the cores come back. There is no separate button because there is no separate
+         *     intention — the second press means the first one did not work.
          */
         post: operations["stop_api_lab_tasks__task_id__stop_post"];
         delete?: never;
@@ -1772,6 +1801,11 @@ export interface components {
         /** AddKey */
         AddKey: {
             /**
+             * Daily Limit
+             * @description Daily request ceiling for this key. Required for a paid provider.
+             */
+            daily_limit?: number | null;
+            /**
              * Key
              * @description An assistant API key. Sealed at rest; never returned.
              */
@@ -1917,6 +1951,11 @@ export interface components {
         AlphaPageRequest: {
             /** Delays */
             delays?: number[] | null;
+            /**
+             * Evolvable
+             * @default false
+             */
+            evolvable: boolean;
             /**
              * Limit
              * @default 100
@@ -2408,6 +2447,43 @@ export interface components {
             /** Updatedat */
             updatedAt: string | null;
         };
+        /** Competition */
+        Competition: {
+            /** Daysleft */
+            daysLeft: number | null;
+            /** Description */
+            description: string | null;
+            /** Enddate */
+            endDate: string | null;
+            /** Enrolled */
+            enrolled: boolean;
+            /** Faq */
+            faq: string | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Scoring */
+            scoring: string | null;
+            /** Signupdaysleft */
+            signUpDaysLeft: number | null;
+            /** Signupenddate */
+            signUpEndDate: string | null;
+            standing: components["schemas"]["Standing"] | null;
+            /** Startdate */
+            startDate: string | null;
+            /** Status */
+            status: string | null;
+            /** Teambased */
+            teamBased: boolean;
+        };
+        /** Competitions */
+        Competitions: {
+            /** Competitions */
+            competitions: components["schemas"]["Competition"][];
+            /** Regionagnostic */
+            regionAgnostic: boolean;
+        };
         /** ContextCounts */
         ContextCounts: {
             /** Categories */
@@ -2812,6 +2888,17 @@ export interface components {
         };
         /** KeyToggle */
         KeyToggle: {
+            /**
+             * Clear Daily Limit
+             * @description Remove this key's daily cap, going back to the model's.
+             * @default false
+             */
+            clear_daily_limit: boolean;
+            /**
+             * Daily Limit
+             * @description Move this key's daily cap. Left alone when omitted.
+             */
+            daily_limit?: number | null;
             /** Enabled */
             enabled: boolean;
         };
@@ -2870,6 +2957,8 @@ export interface components {
         LLMKey: {
             /** Createdat */
             createdAt: string | null;
+            /** Dailylimit */
+            dailyLimit: number | null;
             /** Enabled */
             enabled: boolean;
             /** Hint */
@@ -2958,8 +3047,6 @@ export interface components {
         LLMProvider: {
             /** Baseurl */
             baseUrl: string;
-            /** Freenote */
-            freeNote: string;
             /** Id */
             id: string;
             /** Keyhint */
@@ -2972,6 +3059,10 @@ export interface components {
             onboardingUrl: string;
             /** Openaicompatible */
             openaiCompatible: boolean;
+            /** Paid */
+            paid: boolean;
+            /** Tiernote */
+            tierNote: string;
         };
         /** LLMProviders */
         LLMProviders: {
@@ -2979,6 +3070,8 @@ export interface components {
             default: string;
             /** Note */
             note: string;
+            /** Paidnote */
+            paidNote: string;
             /** Providers */
             providers: components["schemas"]["LLMProvider"][];
         };
@@ -4061,6 +4154,22 @@ export interface components {
             truncation: number | null;
             /** Universe */
             universe: string | null;
+        };
+        /**
+         * Standing
+         * @description This account's own row on the board. Absent until the first Alpha is scored.
+         */
+        Standing: {
+            /** Alphas */
+            alphas: number | null;
+            /** Country */
+            country: string | null;
+            /** Rank */
+            rank: number | null;
+            /** Robustnessscore */
+            robustnessScore: number | null;
+            /** University */
+            university: string | null;
         };
         /**
          * StudyStatus
@@ -5548,6 +5657,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    live_api_competitions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Competitions"];
                 };
             };
         };

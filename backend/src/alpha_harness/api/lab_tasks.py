@@ -309,11 +309,17 @@ async def pause(task_id: int, state: State) -> LabTask:
 
 @router.post("/{task_id}/stop")
 async def stop(task_id: int, state: State) -> LabTask:
-    """Finish a task early. Simulations already sent still finish and are scored."""
+    """Finish a task early. Simulations already sent still finish and are scored.
+
+    Pressed on a task that is *already* stopping, it forces: what is out on BRAIN is
+    cancelled where it can be, the trials close whatever their simulations are doing, and
+    the cores come back. There is no separate button because there is no separate
+    intention — the second press means the first one did not work.
+    """
     row = await _one(state, task_id)
     if row.status not in (StudyStatus.RUNNING, StudyStatus.PAUSED, StudyStatus.QUEUED):
         raise refuse(409, "not_started", "Only a task that has been run can stop.")
-    await scheduler.stop_task(state.optimizer, row)
+    await scheduler.stop_task(state.optimizer, row, force=task_params(row).stopping)
     return await _payload(state, task_id)
 
 

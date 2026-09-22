@@ -69,6 +69,8 @@ class LLMKey(Out):
     provider: str
     hint: str
     enabled: bool
+    #: The user's own daily ceiling, or null to use the model's.
+    daily_limit: int | None
     last_ok_at: str | None
     last_error: str | None
     created_at: str | None
@@ -98,7 +100,9 @@ class LLMProvider(Out):
     base_url: str
     onboarding_url: str
     key_hint: str
-    free_note: str
+    tier_note: str
+    #: True for a provider that bills the user rather than offering a free tier.
+    paid: bool
     openai_compatible: bool
     #: Empty for google: its models are in the roster.
     models: list[LLMModel]
@@ -108,6 +112,7 @@ class LLMProviders(Out):
     providers: list[LLMProvider]
     default: str
     note: str
+    paid_note: str
 
 
 class KeyWorks(Out):
@@ -213,6 +218,11 @@ class AddKey(BaseModel):
     key: str = Field(description="An assistant API key. Sealed at rest; never returned.")
     label: str | None = Field(default=None, description="Which account this key belongs to")
     provider: str = Field(default="google", description="Whose key this is")
+    daily_limit: int | None = Field(
+        default=None,
+        ge=1,
+        description="Daily request ceiling for this key. Required for a paid provider.",
+    )
 
 
 @router.post("/keys", status_code=201)
@@ -222,7 +232,9 @@ async def add_key(body: AddKey, state: State) -> LLMKey:
     Quota is per account, so adding a key from a second account genuinely doubles the
     daily budget — which is why the same key cannot be added twice.
     """
-    row = await state.llm.keys.add(body.key, body.label, provider=body.provider)
+    row = await state.llm.keys.add(
+        body.key, body.label, provider=body.provider, daily_limit=body.daily_limit
+    )
     return LLMKey.model_validate(serialise(row))
 
 
@@ -239,11 +251,21 @@ async def check_all_keys(state: State) -> list[KeyWorks | KeyFailed]:
 
 class KeyToggle(BaseModel):
     enabled: bool
+    daily_limit: int | None = Field(
+        default=None, ge=1, description="Move this key's daily cap. Left alone when omitted."
+    )
+    #: Explicit rather than a zero sentinel, because omitted already means "leave it".
+    clear_daily_limit: bool = Field(
+        default=False, description="Remove this key's daily cap, going back to the model's."
+    )
 
 
 @router.put("/keys/{key_id}")
 async def toggle_key(key_id: int, body: KeyToggle, state: State) -> LLMKey:
-    return LLMKey.model_validate(serialise(await state.llm.keys.set_enabled(key_id, body.enabled)))
+    row = await state.llm.keys.set_enabled(
+        key_id, body.enabled, cap=body.daily_limit, clear=body.clear_daily_limit
+    )
+    return LLMKey.model_validate(serialise(row))
 
 
 @router.delete("/keys/{key_id}", status_code=204)

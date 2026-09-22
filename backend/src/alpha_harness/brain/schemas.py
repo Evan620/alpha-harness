@@ -63,6 +63,18 @@ REGION_AGNOSTIC_REGION = "ALL"
 QUICK_MODE = "QUICK"
 
 
+#: The Alpha a request of each type comes back as. Only region-agnostic differs: it is asked
+#: for as ``REGION_AGNOSTIC`` and returns an ``RA_PARENT`` carrying its children, so the two
+#: never compare equal by name and anything matching a request against its result has to
+#: translate first.
+PRODUCES: dict[str, str] = {SimulationType.REGION_AGNOSTIC: SimulationType.RA_PARENT}
+
+
+def produced_type(requested: str) -> str:
+    """The Alpha type a request of ``requested`` produces."""
+    return PRODUCES.get(requested, requested)
+
+
 def region_label(region: str) -> str:
     """A region as a sentence says it. ``ALL`` on its own reads as a placeholder."""
     return "all regions" if region == REGION_AGNOSTIC_REGION else region

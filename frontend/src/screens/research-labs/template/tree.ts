@@ -21,7 +21,7 @@ export interface OperatorNode {
   /** More than one makes a choice block: the search tries each. */
   ops: string[]
   args: Slot[]
-  options?: Record<string, number | boolean>
+  options?: Record<string, number | boolean | string>
 }
 export interface VariableNode {
   kind: 'var'
@@ -46,7 +46,7 @@ export interface BlockInfo {
   name: string
   category: string
   inputs: Socket[]
-  options: Record<string, number | boolean>
+  options: Record<string, number | boolean | string>
   symbol: string | null
   /** What it gives; an operator that makes a group fits only group inputs. */
   output?: Socket

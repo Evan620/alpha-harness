@@ -11,6 +11,9 @@ import { Badge, Button, Empty, ErrorNotice, Field, Input, Notice, Panel, Skeleto
 import { Dialog } from '@/ui/overlay'
 import { useInvalidateKeys, useKeys, useModels, useProviders } from './shared'
 
+/** Enough to work with for a day, small enough that forgetting it is not expensive. */
+const DEFAULT_CAP = '250'
+
 export function Providers() {
   const providers = useProviders()
   const models = useModels()
@@ -30,50 +33,70 @@ export function Providers() {
     )
   }
 
+  const free = data.providers.filter((p) => !p.paid)
+  const paid = data.providers.filter((p) => p.paid)
+
+  const card = (p: LLMProvider) => {
+    const keyCount = keys.data?.keys.filter((k) => k.provider === p.id).length ?? 0
+    // Google lists no models of its own: they are in the shared roster.
+    const modelCount =
+      p.models.length || (models.data?.models ?? []).filter((m) => m.provider === p.id).length
+    return (
+      <button
+        key={p.id}
+        type="button"
+        onClick={() => setAdding(p)}
+        className="group flex min-h-32 flex-col justify-between gap-4 rounded-lg border border-hairline bg-surface-1 p-4 text-left transition-colors hover:border-hairline-strong hover:bg-surface-2"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className="text-title text-ink">{p.label}</span>
+            {p.id === data.default && <Badge className="w-fit">Recommended</Badge>}
+            {p.paid && (
+              <Badge tone="outline" className="w-fit">
+                Billed to you
+              </Badge>
+            )}
+          </div>
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-hairline text-ink-subtle transition-colors group-hover:border-hairline-strong group-hover:text-ink">
+            <PlusIcon className="size-4" />
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-body-compact">
+          {keys.isPending ? null : keyCount > 0 ? (
+            <Badge>
+              <span className="num">{fmt.int(keyCount)}</span> {keyCount === 1 ? 'Key' : 'Keys'}
+            </Badge>
+          ) : (
+            <span className="text-ink-subtle">No Key yet</span>
+          )}
+          {modelCount > 0 && (
+            <span className="text-ink-subtle">
+              <span className="num">{fmt.int(modelCount)}</span>{' '}
+              {modelCount === 1 ? 'model' : 'models'}
+            </span>
+          )}
+        </div>
+      </button>
+    )
+  }
+
   return (
     <>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {data.providers.map((p) => {
-          const keyCount = keys.data?.keys.filter((k) => k.provider === p.id).length ?? 0
-          // Google lists no models of its own: they are in the shared roster.
-          const modelCount =
-            p.models.length || (models.data?.models ?? []).filter((m) => m.provider === p.id).length
-          return (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setAdding(p)}
-              className="group flex min-h-32 flex-col justify-between gap-4 rounded-lg border border-hairline bg-surface-1 p-4 text-left transition-colors hover:border-hairline-strong hover:bg-surface-2"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 flex-col gap-1.5">
-                  <span className="text-title text-ink">{p.label}</span>
-                  {p.id === data.default && <Badge className="w-fit">Recommended</Badge>}
-                </div>
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-hairline text-ink-subtle transition-colors group-hover:border-hairline-strong group-hover:text-ink">
-                  <PlusIcon className="size-4" />
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-body-compact">
-                {keys.isPending ? null : keyCount > 0 ? (
-                  <Badge>
-                    <span className="num">{fmt.int(keyCount)}</span>{' '}
-                    {keyCount === 1 ? 'Key' : 'Keys'}
-                  </Badge>
-                ) : (
-                  <span className="text-ink-subtle">No Key yet</span>
-                )}
-                {modelCount > 0 && (
-                  <span className="text-ink-subtle">
-                    <span className="num">{fmt.int(modelCount)}</span>{' '}
-                    {modelCount === 1 ? 'model' : 'models'}
-                  </span>
-                )}
-              </div>
-            </button>
-          )
-        })}
-      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{free.map(card)}</div>
+      {/* Its own heading, below the free ones, because the default has to keep reading as
+          "no card required" even once these exist. */}
+      {paid.length > 0 && (
+        <section className="flex flex-col gap-3 border-hairline border-t pt-5">
+          <div className="flex flex-col gap-1">
+            <h3 className="text-title text-ink">Bring your own key</h3>
+            <p className="max-w-prose text-body-compact text-ink-subtle">{data.paidNote}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {paid.map(card)}
+          </div>
+        </section>
+      )}
       <AddKeyDialog provider={adding} onClose={() => setAdding(null)} />
     </>
   )
@@ -90,7 +113,13 @@ function AddKeyDialog({
   const invalidate = useInvalidateKeys()
   const [key, setKey] = useState('')
   const [label, setLabel] = useState('')
+  const [cap, setCap] = useState(DEFAULT_CAP)
   const [added, setAdded] = useState<LLMKey | null>(null)
+
+  const paid = provider?.paid ?? false
+  const capped = Number.parseInt(cap, 10)
+  // A paid key is refused by the backend without one, so the button should not offer to try.
+  const capReady = !paid || (Number.isFinite(capped) && capped >= 1)
 
   const add = useMutation({
     mutationFn: (p: LLMProvider) =>
@@ -98,6 +127,7 @@ function AddKeyDialog({
         key: key.trim(),
         label: label.trim() || null,
         provider: p.id,
+        daily_limit: p.paid ? capped : null,
       }),
     onSuccess: (result, p) => {
       setAdded(result)
@@ -112,6 +142,7 @@ function AddKeyDialog({
   const reset = () => {
     setKey('')
     setLabel('')
+    setCap(DEFAULT_CAP)
     setAdded(null)
     add.reset()
   }
@@ -146,7 +177,7 @@ function AddKeyDialog({
               type="submit"
               form="llm-add-key"
               loading={add.isPending}
-              disabled={!key.trim()}
+              disabled={!key.trim() || !capReady}
             >
               Add Key
             </Button>
@@ -169,12 +200,13 @@ function AddKeyDialog({
               if (key.trim()) add.mutate(provider)
             }}
           >
+            {provider.paid && <Notice tone="warn">{provider.tierNote}</Notice>}
             <Button
               variant="secondary"
               className="w-fit"
               render={<a href={provider.onboardingUrl} target="_blank" rel="noopener noreferrer" />}
             >
-              Get a free {provider.label} Key
+              {provider.paid ? `Get a ${provider.label} Key` : `Get a free ${provider.label} Key`}
               <ExternalLinkIcon />
             </Button>
             <Field label="API Key">
@@ -196,6 +228,21 @@ function AddKeyDialog({
                 autoComplete="off"
               />
             </Field>
+            {provider.paid && (
+              <Field
+                label="Daily request cap"
+                hint="Alpha Harness stops at this many requests a day on this key, and starts again at midnight Pacific. You can change it later."
+              >
+                <Input
+                  type="number"
+                  min={1}
+                  step={10}
+                  value={cap}
+                  onChange={(e) => setCap(e.target.value)}
+                  aria-invalid={!capReady}
+                />
+              </Field>
+            )}
           </form>
         ))}
     </Dialog>
