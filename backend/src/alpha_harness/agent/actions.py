@@ -86,7 +86,13 @@ def _name(path: str, method: str, taken: set[str]) -> str:
     return name
 
 
+#: GETs that start a BRAIN job (correlation is one job per account) or re-run checks.
+THROTTLED_GETS = re.compile(r"(/correlations(/[^/]+)?$|^/api/alphas/\{alpha_id\}/check$)")
+
+
 def _classify(method: str, path: str) -> tuple[Tier, frozenset[Effect]]:
+    if method == "GET" and THROTTLED_GETS.search(path):
+        return Tier.CONFIRM, frozenset({Effect.BRAIN_READ_THROTTLED, Effect.LOCAL_WRITE})
     if method == "GET":
         return Tier.AUTO, frozenset({Effect.LOCAL_READ, Effect.LOCAL_WRITE, Effect.BRAIN_READ})
     if method == "POST" and READ_ONLY_POSTS.search(path) and not SPENDING_PREVIEWS.search(path):
@@ -114,7 +120,10 @@ def _handler(app: FastAPI, method: str, template: str):
             return {"ok": False, "status": 400, "error": f"missing path parameters: {missing}"}
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://agent.local", timeout=120.0
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"x-harness-client": "1"},
+            timeout=120.0,
         ) as client:
             response = await client.request(
                 method,

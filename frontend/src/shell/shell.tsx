@@ -14,6 +14,7 @@ import { useLive } from '@/lib/live'
 import { useRefetchOn } from '@/lib/ws'
 import { Button, Empty, LINK, Notice, Skeleton, Spinner } from '@/ui/kit'
 import { ResizeHandle, useMediaQuery, WIDE } from '@/ui/panels'
+import { AgentPanel } from '@/agent/panel'
 import { CommandMenu } from './command-menu'
 import { Header } from './header'
 import { Sidebar } from './sidebar'
@@ -104,6 +105,7 @@ function Workspace({ you }: { you: Today['you'] }) {
         </Panel>
       </Group>
       <CommandMenu />
+      <AgentPanel />
     </>
   )
 }
