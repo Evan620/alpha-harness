@@ -357,28 +357,6 @@ export function drawdowns(points: Point[], bookSize: number, limit = 3): Drawdow
   return episodes.sort((a, b) => b.depth - a.depth).slice(0, limit)
 }
 
-/**
- * Kestner's K-Ratio, exactly as `vault/store.py` computes it: slope over its standard error,
- * over the number of days. The two must agree — the Pool, Tasks and the Submission Planner
- * read the stored column, and this page recomputes it from the series it already has.
- */
-export function kRatio(points: Point[]): number | null {
-  const n = points.length
-  if (n < 3) return null
-  const meanX = (n - 1) / 2
-  const meanY = points.reduce((s, p) => s + p.value, 0) / n
-  let sxy = 0
-  let sxx = 0
-  points.forEach((p, i) => {
-    sxy += (i - meanX) * (p.value - meanY)
-    sxx += (i - meanX) ** 2
-  })
-  const slope = sxy / sxx
-  const residual = points.reduce((s, p, i) => s + (p.value - meanY - slope * (i - meanX)) ** 2, 0)
-  const error = Math.sqrt(residual / (n - 2) / sxx)
-  return error > 0 ? slope / (error * n) : null
-}
-
 /** Share of days that made money. */
 export const hitRate = (days: Point[]) =>
   days.length ? days.filter((d) => d.value > 0).length / days.length : null

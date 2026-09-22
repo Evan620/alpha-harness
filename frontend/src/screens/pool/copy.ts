@@ -46,7 +46,6 @@ export async function alphasMarkdown(body: AlphaPageRequest, noun: string): Prom
         ...coreMetrics(r),
         ['Train Sharpe', fmt.ratio(r.trainSharpe)],
         ['Test Sharpe', fmt.ratio(r.testSharpe)],
-        ['K-Ratio', fmt.ratio(r.kRatio)],
         ['Submitted', fmt.date(r.dateSubmitted)],
       ],
     })),

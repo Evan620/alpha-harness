@@ -1712,29 +1712,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/vault/alphas/k-ratio": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * K Ratios
-         * @description Download daily PnL where missing and compute K-Ratio, in the background.
-         *
-         *     One Retry-After request per alpha without a stored series, which is why it is
-         *     capped at 100 at a time.
-         */
-        post: operations["k_ratios_api_vault_alphas_k_ratio_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/vault/alphas/query": {
         parameters: {
             query?: never;
@@ -1881,8 +1858,6 @@ export interface components {
             days: number;
             /** Expression */
             expression: string | null;
-            /** Kratio */
-            kRatio: number | null;
             /** Pnl */
             pnl: number[];
             /** Problem */
@@ -2062,8 +2037,6 @@ export interface components {
             fitness: number | null;
             /** Haspnl */
             hasPnl: boolean;
-            /** Kratio */
-            kRatio: number | null;
             /** Longcount */
             longCount?: number | null;
             /** Margin */
@@ -2728,6 +2701,8 @@ export interface components {
              * @default 0.05
              */
             mutation_rate: number;
+            /** Neutralizations */
+            neutralizations?: string[];
             /** Population */
             population?: (50 | 100 | 200) | null;
             /** Region */
@@ -2866,18 +2841,6 @@ export interface components {
             version: string;
             /** Websocketclients */
             websocketClients: number;
-        };
-        /** KRatioRequest */
-        KRatioRequest: {
-            /** Alpha Ids */
-            alpha_ids: string[];
-        };
-        /** KRatioStarted */
-        KRatioStarted: {
-            /** Alphas */
-            alphas: number;
-            /** Taskid */
-            taskId: string;
         };
         /** KeyFailed */
         KeyFailed: {
@@ -3569,6 +3532,8 @@ export interface components {
             delay: number;
             /** Model */
             model?: string | null;
+            /** Neutralizations */
+            neutralizations?: string[];
             /** Region */
             region: string;
             /**
@@ -3608,18 +3573,16 @@ export interface components {
              * @default
              */
             alphaId: string;
-            /**
-             * Decay
-             * @default 0
-             */
-            decay: number;
+            /** Decay */
+            decay?: number | null;
             /** Expression */
             expression?: string | null;
-            /**
-             * Truncation
-             * @default 0.08
-             */
-            truncation: number;
+            /** Nanhandling */
+            nanHandling?: ("ON" | "OFF") | null;
+            /** Testperiod */
+            testPeriod?: string | null;
+            /** Truncation */
+            truncation?: number | null;
         };
         /** PromptInfo */
         PromptInfo: {
@@ -3683,6 +3646,8 @@ export interface components {
         };
         /** PyramidGrid */
         PyramidGrid: {
+            /** Alphasperpyramid */
+            alphasPerPyramid: number;
             /** Categories */
             categories: components["schemas"]["PyramidCategory"][];
             /** Cells */
@@ -3782,8 +3747,6 @@ export interface components {
             feasible: boolean | null;
             /** Fitness */
             fitness: number | null;
-            /** Kratio */
-            kRatio: number | null;
             /** Longcount */
             longCount?: number | null;
             /** Margin */
@@ -3889,24 +3852,22 @@ export interface components {
              * @default 8
              */
             cores: number;
-            /**
-             * Decay
-             * @default 0
-             */
-            decay: number;
+            /** Decay */
+            decay?: number | null;
             /** Expression */
             expression?: string | null;
             /** Markets */
             markets?: components["schemas"]["MarketPick"][];
+            /** Nanhandling */
+            nanHandling?: ("ON" | "OFF") | null;
             /** Neutralizations */
             neutralizations?: string[];
             /** Pairs */
             pairs?: components["schemas"]["PairPick"][];
-            /**
-             * Truncation
-             * @default 0.08
-             */
-            truncation: number;
+            /** Testperiod */
+            testPeriod?: string | null;
+            /** Truncation */
+            truncation?: number | null;
         };
         /**
          * Say
@@ -3968,6 +3929,8 @@ export interface components {
             decay: number;
             /** Delay */
             delay: number;
+            /** Neutralizations */
+            neutralizations?: string[];
             /** Region */
             region: string;
             /**
@@ -4170,10 +4133,14 @@ export interface components {
             maxPosition: string;
             /** Maxtrade */
             maxTrade: string;
+            /** Nanhandling */
+            nanHandling: string;
             /** Neutralization */
             neutralization: string | null;
             /** Region */
             region: string | null;
+            /** Testperiod */
+            testPeriod: string;
             /** Truncation */
             truncation: number | null;
             /** Universe */
@@ -4213,8 +4180,6 @@ export interface components {
             expression: string | null;
             /** Fitness */
             fitness: number | null;
-            /** Kratio */
-            kRatio: number | null;
             /** Lab */
             lab: string | null;
             /** Margin */
@@ -4408,8 +4373,6 @@ export interface components {
             feasible: boolean | null;
             /** Fitness */
             fitness: number | null;
-            /** Kratio */
-            kRatio: number | null;
             /** Longcount */
             longCount?: number | null;
             /** Margin */
@@ -4585,6 +4548,8 @@ export interface components {
             decay: number;
             /** Delay */
             delay: number;
+            /** Neutralizations */
+            neutralizations?: string[];
             /** Region */
             region: string;
             /**
@@ -7330,39 +7295,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VaultOverview"];
-                };
-            };
-        };
-    };
-    k_ratios_api_vault_alphas_k_ratio_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["KRatioRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KRatioStarted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

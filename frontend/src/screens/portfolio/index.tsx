@@ -161,7 +161,7 @@ export function PortfolioScreen() {
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   /** Ticked or unticked by hand, over what the filters pick. A filter change clears it. */
   const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(new Map())
-  const [costText, setCostText] = useState('2')
+  const [costText, setCostText] = useState('5')
   const cost = useDebounced(Math.min(100, Math.max(0, Number(costText) || 0)), 400)
 
   const all = members.data?.members ?? []
@@ -201,7 +201,7 @@ export function PortfolioScreen() {
       {result && result.missing.length > 0 && (
         <Notice tone="warn" title="Some Alphas have no PnL stored">
           {result.missing.join(', ')} {result.missing.length === 1 ? 'is' : 'are'} left out. Sync
-          from BRAIN to download their PnL and turnover.
+          from BRAIN to download their PnL and Turnover.
         </Notice>
       )}
 

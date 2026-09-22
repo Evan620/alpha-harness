@@ -22,6 +22,8 @@ export interface EvolutionRequest {
   delay: number
   universe: string
   alpha_ids: string[]
+  /** Empty keeps the lab's default four. */
+  neutralizations: string[]
   cores: number
   /** `null`: sized from the simulations. */
   population: number | null

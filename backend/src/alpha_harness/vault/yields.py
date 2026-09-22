@@ -178,7 +178,6 @@ class YieldBook:
 
         # Imported here: both modules read this one's check lists at import time.
         from ..labs.ga import independent, series_of
-        from .store import k_ratio
 
         validated = [r for r in ready if r.get("test_sharpe") is not None]
         held = [r for r in validated if held_out_ok(r)]
@@ -187,13 +186,7 @@ class YieldBook:
         days = await self._days_for(
             list(dict.fromkeys(str(r["alpha_id"]) for r in [*held, *chosen]))
         )
-        k_ratios = {
-            str(r["alpha_id"]): r.get("k_ratio")
-            if r.get("k_ratio") is not None
-            else k_ratio(list(days.get(str(r["alpha_id"]), {}).values()))
-            for r in held
-        }
-        order = stability_order(held, k_ratios)
+        order = stability_order(held)
         picks = await asyncio.to_thread(
             independent,
             order,
@@ -234,7 +227,6 @@ class YieldBook:
                 "margin": row.get("margin"),
                 "trainSharpe": row.get("train_sharpe"),
                 "testSharpe": row.get("test_sharpe"),
-                "kRatio": k_ratios.get(alpha_id, row.get("k_ratio")),
                 "checks": json.loads(row["checks"]) if row.get("checks") else [],
                 "pnl": series.get(alpha_id, []),
                 "brainUrl": f"{PLATFORM_ALPHA_URL}{alpha_id}",
@@ -371,9 +363,9 @@ def sub_universe_margin(checks_json: str | None) -> float | None:
     return None
 
 
-def stability_order(rows: list[dict[str, Any]], k_ratios: dict[str, float | None]) -> list[str]:
-    """Alpha ids, most stable first: the mean percentile rank of test-years Sharpe, K-Ratio
-    and sub-universe margin.
+def stability_order(rows: list[dict[str, Any]]) -> list[str]:
+    """Alpha ids, most stable first: the mean percentile rank of test-years Sharpe and
+    sub-universe margin.
 
     Ranks rather than a weighted sum, so no measure needs a scale. A missing measure ranks
     last on that measure.
@@ -381,7 +373,6 @@ def stability_order(rows: list[dict[str, Any]], k_ratios: dict[str, float | None
     ids = [str(r["alpha_id"]) for r in rows]
     measures = [
         {str(r["alpha_id"]): r.get("test_sharpe") for r in rows},
-        k_ratios,
         {str(r["alpha_id"]): sub_universe_margin(r.get("checks")) for r in rows},
     ]
     score = dict.fromkeys(ids, 0.0)

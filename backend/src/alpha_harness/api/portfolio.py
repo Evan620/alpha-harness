@@ -35,8 +35,8 @@ class PortfolioMember(Out):
     categories: list[str]
     #: ``False`` until a sync has read the Alpha's classifications and pyramids.
     labelled: bool
-    #: In-sample figures rebuilt exactly as the combined figures are, final day included, so a
-    #: single Alpha selected reads the same in both.
+    #: BRAIN's own figures for the Alpha, as it reported them. The combination of several
+    #: Alphas is worked out here because BRAIN does not publish one; a single Alpha's is not.
     sharpe: float | None
     turnover: float | None
     fitness: float | None
@@ -139,11 +139,6 @@ class PortfolioSyncStarted(Out):
 async def members(state: State) -> PortfolioMembers:
     """Every submitted Alpha stored locally."""
     rows = await state.alphas.submitted_members()
-    stale = [str(r["alpha_id"]) for r in rows if r["has_series"] and r["series_returns"] is None]
-    if stale:
-        # Series stored before the figures were kept: rebuilt once, then read from the table.
-        await state.alphas.cache_series_stats(stale)
-        rows = await state.alphas.submitted_members()
     out: list[PortfolioMember] = []
     for r in rows:
         pyramids = _labels(r["pyramids"])
@@ -160,12 +155,12 @@ async def members(state: State) -> PortfolioMembers:
                 pyramids=pyramids,
                 categories=sorted({p.rsplit("/", 1)[-1] for p in pyramids}),
                 labelled=r["pyramids"] is not None,
-                sharpe=r["series_sharpe"],
-                turnover=r["series_turnover"],
-                fitness=r["series_fitness"],
-                returns=r["series_returns"],
-                drawdown=r["series_drawdown"],
-                margin=r["series_margin"],
+                sharpe=r["sharpe"],
+                turnover=r["turnover"],
+                fitness=r["fitness"],
+                returns=r["returns"],
+                drawdown=r["drawdown"],
+                margin=r["margin"],
                 has_series=bool(r["has_series"]),
             )
         )

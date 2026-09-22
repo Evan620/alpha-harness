@@ -38,6 +38,7 @@ export const useTemplateLab = create<TemplateDraft & Actions>()(
       simulations: null,
       decay: 0,
       vectorOperators: null,
+      neutralizations: [],
       templateId: null,
       name: '',
       doc: null,

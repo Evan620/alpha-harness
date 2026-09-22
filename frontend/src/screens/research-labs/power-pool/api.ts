@@ -15,6 +15,8 @@ export interface PowerPoolRequest {
   universe: string
   dataset_ids: string[]
   model: string | null
+  /** Empty keeps every neutralization BRAIN offers for the market. */
+  neutralizations: string[]
   cores: number
   simulations: number
 }

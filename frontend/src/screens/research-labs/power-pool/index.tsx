@@ -8,9 +8,10 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { errorMessage } from '@/api/http'
 import { fmt } from '@/lib/format'
-import { DEFAULT_SCOPE } from '@/lib/scope'
+import { DEFAULT_SCOPE, useScopeOptions } from '@/lib/scope'
 import { useDebounced } from '@/lib/use-debounced'
 import { CORES, MAX_SIMULATIONS, useLabMarket } from '@/screens/research-labs/lab-task'
+import { NeutralizationPicker } from '@/screens/research-labs/neutralization'
 import { type PowerPoolRequest, powerPoolLab } from '@/screens/research-labs/power-pool/api'
 import { DatasetsPanel, Setting } from '@/screens/research-labs/task-settings'
 import {
@@ -35,6 +36,8 @@ interface PowerPoolDraft {
   cores: number
   simulations: number | null
   model: string | null
+  /** Empty keeps every neutralization BRAIN offers for the market. */
+  neutralizations: string[]
 }
 
 const useDraft = create<PowerPoolDraft & { set: (change: Partial<PowerPoolDraft>) => void }>()(
@@ -47,6 +50,7 @@ const useDraft = create<PowerPoolDraft & { set: (change: Partial<PowerPoolDraft>
       cores: 4,
       simulations: null,
       model: null,
+      neutralizations: [],
       set: (change) => set(change),
     }),
     { name: 'alpha-harness-power-pool-lab' },
@@ -71,12 +75,21 @@ export function PowerPoolLabScreen() {
       ? draft.model
       : (options.data?.defaultModel ?? null)
 
+  // BRAIN's legal list for this market; the LLM draws from whatever is chosen, or all of it.
+  const scopeOptions = useScopeOptions({
+    instrumentType: 'EQUITY',
+    region: draft.region,
+    delay: draft.delay,
+    universe: draft.universe,
+  })
+
   const body: PowerPoolRequest = {
     region: draft.region,
     delay: draft.delay,
     universe: draft.universe,
     dataset_ids: draft.datasetIds,
     model,
+    neutralizations: draft.neutralizations,
     cores: draft.cores,
     simulations: draft.simulations ?? 0,
   }
@@ -182,6 +195,14 @@ export function PowerPoolLabScreen() {
               />
             </Setting>
           </div>
+          {scopeOptions.neutralizations.length > 0 && (
+            <NeutralizationPicker
+              available={scopeOptions.neutralizations}
+              value={draft.neutralizations}
+              onChange={(next) => draft.set({ neutralizations: next })}
+              hint="None chosen draws from every one BRAIN offers here."
+            />
+          )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Metric boxed label="Datasets" value={fmt.int(draft.datasetIds.length)} />
             <Metric boxed label="Fields" value={fmt.int(plan?.fields)} />

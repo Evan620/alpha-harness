@@ -57,6 +57,56 @@ export function assignCores(
  * core between snapshots. When BRAIN finishes a batch the parent leaves the active set before
  * its children are collected, so those orphans no longer hold a core and are not drawn.
  */
+/**
+ * Cores one running simulation holds. BRAIN meters GLB at double rate, and a region-agnostic
+ * run costs one core per region its fields intersect — so drawing a chip each would show a
+ * bar that is mostly idle while the engine has no room left. Mirrors ``SLOT_COST`` in
+ * ``engine/lifecycle.py``; the two are read together when either changes.
+ */
+export function coreCost(row: { region?: string | null; simType?: string | null }): number {
+  if (row.simType === 'REGION_AGNOSTIC' || row.simType === 'RA_PARENT') return 3
+  return row.region === 'GLB' ? 2 : 1
+}
+
+/** A run and the cores it occupies, or one idle core. */
+export interface CoreBlock {
+  holder: Core['holder']
+  core: Core | null
+  /** How many cores this block covers. */
+  span: number
+  /** Zero-based index of its first core. */
+  start: number
+}
+
+/**
+ * The cores laid out as what actually holds them: one block per running simulation, as wide
+ * as {@link coreCost} says, then an idle block for each core left over.
+ *
+ * A GLB run holds two cores and a region-agnostic one holds three, so a row or a chip each
+ * would draw a machine that looks half free while the engine has no room to dispatch —
+ * and filling every core would claim work that is not there. A block spanning its cores says
+ * both at once: how many simulations are running, and how much of the machine they occupy.
+ */
+export function coreBlocks(cores: Core[], slots: number): CoreBlock[] {
+  const blocks: CoreBlock[] = []
+  let used = 0
+  for (const core of cores) {
+    if (!core.holder) continue
+    const span = Math.min(coreCost(core.holder), slots - used)
+    if (span <= 0) break
+    blocks.push({ holder: core.holder, core, span, start: used })
+    used += span
+  }
+  for (; used < slots; used++) {
+    blocks.push({ holder: null, core: null, span: 1, start: used })
+  }
+  return blocks
+}
+
+/** ``C3`` for one core, ``C3\u2013C4`` for a run holding several. */
+export const blockLabel = (block: CoreBlock): string =>
+  block.span === 1 ? `C${block.start + 1}` : `C${block.start + 1}\u2013C${block.start + block.span}`
+
 export function buildCores(
   active: SimulationRow[],
   slots: number,

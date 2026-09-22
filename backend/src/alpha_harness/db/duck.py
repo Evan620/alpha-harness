@@ -134,7 +134,6 @@ CREATE TABLE IF NOT EXISTS alpha (
 );
 
 -- Computed from alpha_pnl on demand, so it survives re-imports of the alpha row.
-ALTER TABLE alpha ADD COLUMN IF NOT EXISTS k_ratio DOUBLE;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS name VARCHAR;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS date_submitted TIMESTAMP;
 -- A simulation that holds its last years out as a test reports its train years apart.
@@ -162,16 +161,12 @@ ALTER TABLE alpha ADD COLUMN IF NOT EXISTS test_turnover DOUBLE;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_version INTEGER;
 -- In-sample figures rebuilt from the stored series (final days included), kept so the Portfolio
 -- list need not read every series. Apart from BRAIN's own, which a listing overwrites.
-ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_sharpe DOUBLE;
-ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_turnover DOUBLE;
-ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_fitness DOUBLE;
-ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_returns DOUBLE;
-ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_drawdown DOUBLE;
-ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_margin DOUBLE;
--- K-Ratios stored before the 2003 form are cleared once and recomputed from alpha_pnl.
-UPDATE alpha SET k_ratio = NULL
-WHERE NOT EXISTS (SELECT 1 FROM duckdb_tables() WHERE table_name = 'k_ratio_2003');
-CREATE TABLE IF NOT EXISTS k_ratio_2003 (done BOOLEAN);
+-- An older database still carries `series_sharpe` and its five siblings, rebuilt locally
+-- from the stored series before the Portfolio page read BRAIN's own per-Alpha figures, and
+-- `k_ratio`. Nothing reads or writes any of them now; they stay because DuckDB refuses to
+-- drop a column from a table an index depends on, and rebuilding this one to tidy seven
+-- unread doubles would cost far more than it saves.
+DROP TABLE IF EXISTS k_ratio_2003;
 
 -- One row per alpha per trading day. ~2,500 rows per alpha.
 CREATE TABLE IF NOT EXISTS alpha_pnl (
@@ -390,7 +385,6 @@ ARROW_TYPES: dict[str, dict[str, pa.DataType]] = {
         "date_created": _TS,
         "checks": _STR,
         "fetched_at": _TS,
-        "k_ratio": _F64,
         "name": _STR,
         "date_submitted": _TS,
         "train_sharpe": _F64,
@@ -408,12 +402,6 @@ ARROW_TYPES: dict[str, dict[str, pa.DataType]] = {
         "simulation_mode": _STR,
         "test_turnover": _F64,
         "series_version": _I32,
-        "series_sharpe": _F64,
-        "series_turnover": _F64,
-        "series_fitness": _F64,
-        "series_returns": _F64,
-        "series_drawdown": _F64,
-        "series_margin": _F64,
     },
     "alpha_pnl": {
         "alpha_id": _STR,

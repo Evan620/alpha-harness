@@ -605,11 +605,11 @@ function TaskDetail({
   const found = top.data ?? []
   const source = found.find((r) => r.source)
   const rows = source ? [source, ...found.filter((r) => r !== source)] : found
-  // Green where every check passed, red where one refuses it, and plain where BRAIN has not
-  // finished judging. A pending row was green until it was noticed that the Submission Planner
-  // holds those back — colouring it like a confirmed pass promises a candidate it will refuse.
+  // Red only where a check refuses the Alpha. A row still waiting on BRAIN is green like a
+  // passing one: nothing has said no, which is the question this pane answers. Whether it is
+  // submittable *yet* is the Submittable count's job, and that one does hold pending back.
   const verdict = (r: RankedAlpha) =>
-    r.pending ? '' : r.submittable ? 'bg-pnl-positive-tint' : 'bg-pnl-negative-tint'
+    r.submittable || r.pending ? 'bg-pnl-positive-tint' : 'bg-pnl-negative-tint'
   const rowClass = (r: RankedAlpha) =>
     // The source keeps its verdict, and a heavier rule under it so the ranking below reads
     // as its own block.
@@ -617,10 +617,11 @@ function TaskDetail({
 
   const sampler = task.lab === SETTINGS_SAMPLER
   const done = task.status === 'COMPLETE' || task.status === 'FAILED'
-  // Counted the way the Submission Planner counts, so the two screens cannot disagree.
+  // The green rows: nothing has refused them. Pending ones are in here, which is what makes
+  // the figure an estimate — a check BRAIN has not run yet can still come back FAIL.
   const pending = found.filter((r) => r.pending).length
-  const green = found.filter((r) => r.submittable && !r.pending).length
-  const red = found.length - green - pending
+  const green = found.filter((r) => r.submittable || r.pending).length
+  const red = found.length - green
   // From when it first ran, not when it was added — a task can sit idle for days. Older rows
   // predate that being recorded, so they fall back to when they were created.
   const began = Date.parse(task.startedAt ?? task.createdAt ?? '')
@@ -673,12 +674,18 @@ function TaskDetail({
           {!done && <Metric boxed label="In Flight" value={fmt.int(task.queued + task.running)} />}
           {sampler ? (
             <>
+              {/* `~` because the pending rows counted here have checks BRAIN has not run
+                  yet, any one of which can still come back FAIL. */}
               <Metric
                 boxed
                 tone="profit"
                 label="Submittable"
-                value={fmt.int(green)}
-                hint={pending ? `${fmt.int(pending)} still being checked` : ''}
+                value={
+                  <>
+                    {pending > 0 && '~'}
+                    {fmt.int(green)}
+                  </>
+                }
               />
               <Metric
                 boxed
@@ -697,7 +704,6 @@ function TaskDetail({
             value={elapsed == null ? DASH : fmt.duration(elapsed)}
             hint={done ? '' : 'still running'}
           />
-          <Metric boxed label={`Best ${task.objectiveLabel}`} value={fmt.ratio(task.best)} />
         </div>
         {task.message && (
           <Notice tone={task.status === 'FAILED' ? 'error' : 'info'} title={task.message} />

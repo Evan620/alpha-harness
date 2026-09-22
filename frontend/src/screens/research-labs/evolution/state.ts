@@ -15,6 +15,8 @@ export interface EvolutionDraft {
   /** `null`: sized from the simulations. */
   population: number | null
   mutationRate: number
+  /** Empty leaves the lab on its own four group neutralizations. */
+  neutralizations: string[]
   /** The Auto Select job whose result is shown, and the one whose seeds were already taken. */
   autoJobId: string | null
   appliedJobId: string | null
@@ -32,6 +34,7 @@ export const useEvolutionLab = create<
       cores: 4,
       simulations: null,
       population: null,
+      neutralizations: [],
       mutationRate: 0.05,
       autoJobId: null,
       appliedJobId: null,

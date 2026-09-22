@@ -34,7 +34,9 @@ import {
   Skeleton,
   Textarea,
 } from '@/ui/kit'
+import { Select } from '@/ui/overlay'
 import {
+  type Holding,
   type MarketPick,
   type Pair,
   pairLabel,
@@ -311,6 +313,103 @@ function Tree({
   )
 }
 
+/** A typed number held inside BRAIN's own bounds. */
+const clamp = (text: string, max: number) =>
+  Math.min(max, Math.max(0, Math.round(Number(text) || 0)))
+
+/**
+ * How every simulation in the sweep is held: BRAIN's own four, laid out as BRAIN lays them
+ * out — Test Period is years *and* months, not a number of whole years.
+ */
+function SettingsFields({
+  decay,
+  setDecay,
+  truncation,
+  setTruncation,
+  nanHandling,
+  setNanHandling,
+  testYears,
+  setTestYears,
+  testMonths,
+  setTestMonths,
+}: {
+  decay: string
+  setDecay: (v: string) => void
+  truncation: string
+  setTruncation: (v: string) => void
+  nanHandling: 'ON' | 'OFF'
+  setNanHandling: (v: 'ON' | 'OFF') => void
+  testYears: string
+  setTestYears: (v: string) => void
+  testMonths: string
+  setTestMonths: (v: string) => void
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <Field label="Decay">
+        <Input
+          type="number"
+          min={0}
+          max={512}
+          step={1}
+          value={decay}
+          onChange={(e) => setDecay(e.target.value)}
+        />
+      </Field>
+      <Field label="Truncation">
+        <Input
+          type="number"
+          min={0}
+          max={1}
+          step={0.01}
+          value={truncation}
+          onChange={(e) => setTruncation(e.target.value)}
+        />
+      </Field>
+      <Field label="NaN Handling">
+        <Select
+          label="NaN Handling"
+          value={nanHandling}
+          onChange={(v) => setNanHandling(v as 'ON' | 'OFF')}
+          items={[
+            { value: 'ON', label: 'On' },
+            { value: 'OFF', label: 'Off' },
+          ]}
+        />
+      </Field>
+      {/* BRAIN takes P0Y0M0D up to P6Y0M0D, and its own form splits the two. The units sit
+          beside the boxes rather than above them, so this reads as one control on one line
+          and its inputs share a baseline with Decay and Truncation. */}
+      <Fieldset legend="Test Period">
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={0}
+            max={6}
+            step={1}
+            aria-label="Test period, years"
+            className="w-16"
+            value={testYears}
+            onChange={(e) => setTestYears(e.target.value)}
+          />
+          <span className="text-body-compact text-ink-subtle">Years</span>
+          <Input
+            type="number"
+            min={0}
+            max={11}
+            step={1}
+            aria-label="Test period, months"
+            className="w-16"
+            value={testMonths}
+            onChange={(e) => setTestMonths(e.target.value)}
+          />
+          <span className="text-body-compact text-ink-subtle">Months</span>
+        </div>
+      </Fieldset>
+    </div>
+  )
+}
+
 export function SettingsSamplerScreen() {
   const search = useSearch({ from: '/tools/settings-sampler' })
   const navigate = useNavigate()
@@ -323,6 +422,12 @@ export function SettingsSamplerScreen() {
   const [expression, setExpression] = useState('')
   const [decay, setDecay] = useState('0')
   const [truncation, setTruncation] = useState('0.08')
+  const [nanHandling, setNanHandling] = useState<'ON' | 'OFF'>('ON')
+  const [testYears, setTestYears] = useState('2')
+  const [testMonths, setTestMonths] = useState('0')
+  /** Which Alpha's settings have been read into the fields above, so a refetch of the same
+   *  plan does not overwrite an edit made since. */
+  const [inherited, setInherited] = useState('')
   /** The expression last analysed; the draft above only counts once Analyse is pressed. */
   const [typed, setTyped] = useState<Source | null>(null)
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set())
@@ -335,6 +440,12 @@ export function SettingsSamplerScreen() {
     if (search.alpha) setMode('alpha')
   }, [search.alpha])
 
+  const holding: Holding = {
+    decay: Math.max(0, Math.round(Number(decay) || 0)),
+    truncation: Number(truncation) || 0.08,
+    nanHandling,
+    testPeriod: `P${clamp(testYears, 6)}Y${clamp(testMonths, 11)}M0D`,
+  }
   const source: Source | null = mode === 'alpha' ? (alphaId ? { alphaId } : null) : typed
   const query = useQuery({
     queryKey: ['settings-sampler', source],
@@ -343,6 +454,21 @@ export function SettingsSamplerScreen() {
     retry: false,
   })
   const plan = query.data
+
+  // An Alpha's own settings fill the fields the first time its plan arrives, so what is shown
+  // is what would run — and stays editable, because an edit is the whole point of having them
+  // here. Keyed on the Alpha, so a refetch never overwrites a change made since.
+  useEffect(() => {
+    const own = plan?.settings
+    if (!own || !plan.alphaId || plan.alphaId === inherited) return
+    setInherited(plan.alphaId)
+    setDecay(String(own.decay ?? 0))
+    setTruncation(String(own.truncation ?? 0.08))
+    setNanHandling(own.nanHandling === 'OFF' ? 'OFF' : 'ON')
+    const period = /^P(\d+)Y(\d+)M/.exec(own.testPeriod ?? '')
+    setTestYears(period?.[1] ?? '2')
+    setTestMonths(period?.[2] ?? '0')
+  }, [plan?.settings, plan?.alphaId, inherited])
 
   const reset = (from: SettingsPlan) => {
     const start = defaults(from)
@@ -426,6 +552,7 @@ export function SettingsSamplerScreen() {
     mutationFn: () =>
       settingsSampler.addTask({
         ...(source ?? { alphaId: '' }),
+        ...holding,
         markets: picks,
         neutralizations,
         pairs: allPairs.filter((p) => pairs.includes(pairKey(p))),
@@ -444,11 +571,7 @@ export function SettingsSamplerScreen() {
   const analyse = (event: React.FormEvent) => {
     event.preventDefault()
     if (mode === 'expression') {
-      setTyped({
-        expression: expression.trim(),
-        decay: Math.max(0, Math.round(Number(decay) || 0)),
-        truncation: Number(truncation) || 0.08,
-      })
+      setTyped({ expression: expression.trim() })
       return
     }
     const next = draft.trim()
@@ -459,7 +582,6 @@ export function SettingsSamplerScreen() {
     })
   }
 
-  const settings = plan?.settings
   return (
     <Page>
       <PageHeader
@@ -488,7 +610,6 @@ export function SettingsSamplerScreen() {
               <Input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="om6RAVLn"
                 spellCheck={false}
                 className="num"
               />
@@ -503,32 +624,12 @@ export function SettingsSamplerScreen() {
               <Textarea
                 value={expression}
                 onChange={(e) => setExpression(e.target.value)}
-                placeholder={'signal = rank(eps / est_eps);\nsignal'}
                 spellCheck={false}
                 rows={6}
                 className="num"
               />
             </Field>
             <div className="flex flex-wrap items-end gap-3">
-              <Field label="Decay" className="w-28">
-                <Input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={decay}
-                  onChange={(e) => setDecay(e.target.value)}
-                />
-              </Field>
-              <Field label="Truncation" className="w-28">
-                <Input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={truncation}
-                  onChange={(e) => setTruncation(e.target.value)}
-                />
-              </Field>
               <Button type="submit" variant="primary" disabled={!expression.trim()}>
                 Analyse
               </Button>
@@ -536,7 +637,7 @@ export function SettingsSamplerScreen() {
           </form>
         )}
 
-        {plan?.expression && settings && (
+        {plan?.expression && (
           <div className="mt-4 flex flex-col gap-4 border-t border-hairline pt-4">
             <AstInspector expression={plan.expression} />
 
@@ -572,34 +673,33 @@ export function SettingsSamplerScreen() {
                 )}
               </div>
             </section>
-
-            <section className="flex flex-col gap-2">
-              <h3 className="text-body-compact font-medium tracking-wide text-ink-muted uppercase">
-                Simulation Settings
-              </h3>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {(
-                  [
-                    ['Region', settings.region ?? DASH],
-                    ['Delay', settings.delay == null ? DASH : `D${settings.delay}`],
-                    ['Universe', settings.universe ?? DASH],
-                    ['Neutralization', settings.neutralization ?? DASH],
-                    ['Max Trade', settings.maxTrade],
-                    ['Max Position', settings.maxPosition],
-                    ['Decay', settings.decay ?? DASH],
-                    ['Truncation', settings.truncation ?? DASH],
-                  ] as const
-                )
-                  // An expression has no market of its own, so only what it holds is shown.
-                  .filter(([, value]) => value !== DASH)
-                  .map(([label, value]) => (
-                    <Metric key={label} boxed size="sm" label={label} value={value} />
-                  ))}
-              </div>
-            </section>
           </div>
         )}
       </Panel>
+
+      {plan?.expression && (
+        <Panel
+          title="Simulation Settings"
+          description={
+            plan.alphaId
+              ? 'Read from the Alpha, and yours to change. Every market in the sweep runs at these.'
+              : 'Every market in the sweep runs at these.'
+          }
+        >
+          <SettingsFields
+            decay={decay}
+            setDecay={setDecay}
+            truncation={truncation}
+            setTruncation={setTruncation}
+            nanHandling={nanHandling}
+            setNanHandling={setNanHandling}
+            testYears={testYears}
+            setTestYears={setTestYears}
+            testMonths={testMonths}
+            setTestMonths={setTestMonths}
+          />
+        </Panel>
+      )}
 
       {query.isError && <ErrorNotice error={query.error} title="Could not read that Alpha" />}
       {plan?.problems.map((problem) => (
@@ -750,9 +850,9 @@ export function SettingsSamplerScreen() {
         </Panel>
       ) : (
         <Panel>
-          <Empty title="Start with an expression">
-            Paste an Alpha expression above, or switch to Alpha ID to run an existing Alpha with its
-            own settings.
+          <Empty title="Start with an Expression">
+            Paste an Alpha Expression above, or switch to Alpha ID to run an existing Alpha with its
+            own Settings.
           </Empty>
         </Panel>
       )}

@@ -16,7 +16,6 @@ export type AlphaMetricKey =
   | 'drawdown'
   | 'margin'
   | 'operator_count'
-  | 'k_ratio'
   | 'calmar'
 export type AlphaSortKey = AlphaMetricKey | 'date_created' | 'date_submitted'
 
@@ -75,11 +74,6 @@ export const pool = {
   query: (body: AlphaPageRequest) => http.post<AlphaPage>('/api/vault/alphas/query', body),
   detail: (alphaId: string) =>
     http.get<AlphaDetail>(`/api/vault/alphas/${encodeURIComponent(alphaId)}/detail`),
-  /** ≤ 100 ids; downloads daily PnL where missing, in the background. */
-  kRatio: (alphaIds: string[]) =>
-    http.post<Schemas['KRatioStarted']>('/api/vault/alphas/k-ratio', {
-      alpha_ids: alphaIds,
-    }),
   submittable: (scope: Scope, limit = 200) =>
     http.get<SubmittableResponse>(
       `/api/vault/submittable${qs({ region: scope.region, delay: scope.delay, universe: scope.universe, instrument_type: scope.instrumentType, limit })}`,

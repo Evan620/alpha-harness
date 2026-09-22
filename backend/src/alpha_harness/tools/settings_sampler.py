@@ -20,7 +20,12 @@ import structlog
 from sqlalchemy import func, select
 
 from ..brain.errors import BrainError, BrainValidationError
-from ..brain.schemas import REGION_AGNOSTIC_REGION, SimulationRequest, SimulationSettings
+from ..brain.schemas import (
+    REGION_AGNOSTIC_REGION,
+    TEST_PERIOD,
+    SimulationRequest,
+    SimulationSettings,
+)
 from ..brain.settings_schema import valid_values
 from ..db.models import MetadataCache, SimStatus, StudyStatus, Trial, TrialState, utcnow
 from ..engine.packer import MAX_BATCH
@@ -179,24 +184,34 @@ async def plan(
     alpha_id: str,
     *,
     expression: str | None = None,
-    decay: int = 0,
-    truncation: float = 0.08,
+    decay: int | None = None,
+    truncation: float | None = None,
+    nan_handling: str | None = None,
+    test_period: str | None = None,
 ) -> dict[str, Any]:
     """Everything the screen needs: the expression, its fields, and the space they open up.
 
-    From an Alpha, its expression, decay and truncation are its own. From a bare
-    ``expression``, decay and truncation are the caller's, and no simulation is the reference.
+    From an Alpha, the expression and every setting are its own to begin with. Each of decay,
+    truncation, NaN handling and the test period can be overridden anyway: re-running a proven
+    expression at a different decay is as much a sweep as re-running it in another market, and
+    refusing to let the source Alpha be varied would be an arbitrary line.
     """
     problems: list[str] = []
     warnings: list[str] = []
 
     if expression is not None:
-        source: dict[str, Any] = {"decay": decay, "truncation": truncation, "nanHandling": "ON"}
+        source: dict[str, Any] = {}
     else:
         body = await state.endpoints.alpha_body(alpha_id)
         code = body.get("regular") or body.get("combo") or body.get("selection") or {}
         expression = code.get("code") if isinstance(code, dict) else None
         source = dict(body.get("settings") or {})
+    # An override supplied stands; anything left out keeps the Alpha's own, or the platform
+    # default when there is no Alpha to inherit from.
+    source["decay"] = source.get("decay", 0) if decay is None else decay
+    source["truncation"] = source.get("truncation", 0.08) if truncation is None else truncation
+    source["nanHandling"] = nan_handling or source.get("nanHandling") or "ON"
+    source["testPeriod"] = test_period or source.get("testPeriod") or TEST_PERIOD
     if not expression:
         problems.append(f"{alpha_id or 'The expression'} has no expression to re-run.")
         return _empty(alpha_id, "", [], source, problems, warnings)
@@ -330,6 +345,7 @@ def _settings(source: dict[str, Any]) -> dict[str, Any]:
         "maxTrade": source.get("maxTrade") or "OFF",
         "maxPosition": source.get("maxPosition") or "OFF",
         "nanHandling": source.get("nanHandling") or "ON",
+        "testPeriod": source.get("testPeriod") or TEST_PERIOD,
     }
 
 
@@ -409,6 +425,7 @@ def expand(
     decay = int(source.get("decay") or 0)
     truncation = float(source.get("truncation") or 0.08)
     nan_handling = str(source.get("nanHandling") or "ON")
+    test_period = str(source.get("testPeriod") or TEST_PERIOD)
     origin = (
         str(source.get("region") or ""),
         int(source.get("delay") or 0),
@@ -447,6 +464,7 @@ def expand(
                     decay=decay,
                     truncation=truncation,
                     nan_handling=nan_handling,
+                    test_period=test_period,
                     max_trade=trade,
                     max_position=position,
                 ),

@@ -36,7 +36,7 @@ function moment(iso: string | null | undefined): Date | null {
 export const fmt = {
   /** 5,000 */
   int: (v: number | null | undefined) => (isNum(v) ? INT.format(Math.round(v)) : DASH),
-  /** 1.58 — Sharpe, Fitness, K-Ratio. */
+  /** 1.58 — Sharpe and Fitness. */
   ratio: (v: number | null | undefined, digits = 2) => (isNum(v) ? v.toFixed(digits) : DASH),
   /** A fraction as a percent: 0.643 → 64.3% */
   pct: (v: number | null | undefined, digits = 1) =>

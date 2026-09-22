@@ -80,6 +80,8 @@ class PyramidGrid(Out):
     categories: list[PyramidCategory]
     cells: list[PyramidCell]
     quarter: Quarter
+    #: Submitted Alphas a pyramid needs before BRAIN counts it as formulated.
+    alphas_per_pyramid: int
 
 
 class CatalogScopeRow(BaseModel):

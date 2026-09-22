@@ -168,8 +168,9 @@ const COLUMNS: Column<TaskAlpha>[] = [
     width: '92px',
     sortable: true,
     cell: (r) =>
+      // Green either way: nothing has refused these, which is what the pane lists.
       r.pending ? (
-        <span className="text-ink-muted">Pending</span>
+        <span className="text-pnl-positive">Pending</span>
       ) : (
         <span className="text-pnl-positive">Pass</span>
       ),
@@ -201,14 +202,12 @@ export function SubmittableAlphas({ onOpenAlpha }: { onOpenAlpha: (alphaId: stri
   useRefetchOn('studies', ['submittable-alphas'], 30_000)
   const [sort, setSort] = useState<Sort>({ key: 'sharpe', desc: true })
   const rows = [...(query.data ?? [])].sort((a, b) => compare(a, b, sort))
-  const pending = rows.filter((r) => r.pending).length
   return (
     <div className="flex flex-col gap-3">
       <p className="text-body-compact text-ink-subtle">
         <span className="num text-ink">{fmt.int(rows.length)}</span> submittable Alphas from every
         task: no check fails, only PASS, WARNING or PENDING, apart from checks that never block a
         submission (Prod Correlation, Regular Submission and the theme and pyramid labels).
-        {pending > 0 && ` ${fmt.int(pending)} are still being checked by BRAIN.`}
       </p>
       <DataTable
         label="Submittable Alphas"

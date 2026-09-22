@@ -124,6 +124,7 @@ def assemble(
         "columns": [{"region": region, "delay": delay} for region, delay in columns],
         "categories": [{"id": cid, "name": name} for cid, name in ordered],
         "cells": list(cells.values()),
+        "alphasPerPyramid": LIT_AT,
     }
 
 

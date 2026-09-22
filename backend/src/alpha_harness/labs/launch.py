@@ -23,7 +23,7 @@ from ..schemas import Out
 from . import scheduler, search
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from datetime import datetime
 
     from ..brain.schemas import SimulationRequest
@@ -94,12 +94,25 @@ def choices(legal: dict[str, Any], name: str) -> list[Any]:
     return [c.get("value") for c in (legal.get(name, {}).get("choices") or [])]
 
 
-async def neutralizations_for(state: Any, region: str, delay: int) -> list[str]:
-    """The neutralizations a lab uses in a market: BRAIN's legal ones, in the lab's order."""
+async def neutralizations_for(
+    state: Any, region: str, delay: int, chosen: Sequence[str] = ()
+) -> list[str]:
+    """The neutralizations a lab searches in a market, in BRAIN's own order.
+
+    Chosen ones are honoured as given, narrowed only by what BRAIN accepts in that market. The
+    lab's own default list is four group neutralizations, and quietly intersecting a choice
+    with it would drop ``STATISTICAL`` or ``CROWDING`` from a sweep that asked for them —
+    a task that never ran what it was told to.
+
+    Choosing nothing keeps the default, so every lab behaves exactly as before until a reader
+    says otherwise.
+    """
     schema = await state.metadata.cached_settings_schema()
     if not schema:
         return []
     offered = choices(legal_choices(schema, region, delay), "neutralization")
+    if chosen and (picked := [n for n in offered if n in set(chosen)]):
+        return picked
     return [n for n in search.NEUTRALIZATIONS if n in offered] or offered[:1]
 
 
@@ -126,6 +139,8 @@ class SearchRequest(BaseModel):
     universe: str | None = None
     dataset_ids: list[str] = Field(default_factory=list, max_length=200)
     vector_operators: list[str] = Field(default_factory=list)
+    #: Empty keeps the lab's default four; anything here is searched instead.
+    neutralizations: list[str] = Field(default_factory=list, max_length=20)
     decay: int = 0
     cores: int = Field(default=search.MAX_CORES, ge=1, le=search.MAX_CORES)
     #: Needed to add a task; a preview ignores it.
@@ -155,7 +170,9 @@ async def market_for(body: SearchRequest, state: Any, need: tuple[str, ...] = ()
     legal = legal_choices(schema, body.region, body.delay)
     universes = await synced_universes(state, legal, body.region, body.delay, body.universe)
     downloaded = bool(universes)
-    neutralizations = await neutralizations_for(state, body.region, body.delay)
+    neutralizations = await neutralizations_for(
+        state, body.region, body.delay, body.neutralizations
+    )
     if schema and not neutralizations:
         problems.append(f"BRAIN offers no neutralization for {region_label(body.region)}.")
 

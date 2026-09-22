@@ -15,6 +15,8 @@ export interface SearchLabDraft {
   decay: number
   /** `null` until the user chooses: then the lab allows `vec_avg`. */
   vectorOperators: string[] | null
+  /** Empty leaves the lab on its own four group neutralizations. */
+  neutralizations: string[]
 }
 
 export const useSearchLab = create<
@@ -30,6 +32,7 @@ export const useSearchLab = create<
       simulations: null,
       decay: 0,
       vectorOperators: null,
+      neutralizations: [],
       set: (change) => set(change),
     }),
     { name: 'alpha-harness-search-lab' },

@@ -87,7 +87,7 @@ function Body({ alphaId }: { alphaId: string }) {
           render={<Link to="/alpha/$alphaId" params={{ alphaId: d.alphaId }} />}
         >
           <MaximizeIcon aria-hidden />
-          Open full page
+          Open Full Page
         </Button>
         <OpenInBrain url={d.brainUrl} />
         <RecheckButton alphaId={d.alphaId} />
@@ -95,9 +95,7 @@ function Body({ alphaId }: { alphaId: string }) {
       </div>
 
       <Section title="Cumulative PnL" description={`${fmt.int(d.days)} trading days stored`}>
-        <div className="flex gap-3">
-          <Metric size="sm" label="K-Ratio" value={fmt.ratio(d.kRatio)} />
-        </div>
+        <div className="flex gap-3"></div>
         {d.problem && <Notice tone="warn">{d.problem}</Notice>}
         {d.pnl.length > 1 ? (
           <PnlChart values={d.pnl} dates={d.dates} label={`Cumulative PnL of ${d.alphaId}`} />

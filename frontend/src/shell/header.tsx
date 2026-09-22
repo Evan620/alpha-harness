@@ -6,11 +6,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ClockIcon, SearchIcon, ZapIcon } from 'lucide-react'
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { simulations, today } from '@/api/core'
 import { cn } from '@/lib/cn'
 import { fmt } from '@/lib/format'
 import { useCores, useLive } from '@/lib/live'
+import { coreBlocks } from '@/lib/matrix'
 import { useRefetchOn } from '@/lib/ws'
 import { Button, STATUS } from '@/ui/kit'
 import { Tooltip } from '@/ui/overlay'
@@ -61,6 +62,8 @@ function HeaderCores() {
   const sessionLost = Boolean(engine.data?.sessionLost)
   const { cores } = useCores(live ?? active.data, slots, maxBatch)
 
+  const blocks = useMemo(() => coreBlocks(cores, slots), [cores, slots])
+
   return (
     <nav
       aria-label={`${slots} simulation cores execution matrix`}
@@ -68,13 +71,13 @@ function HeaderCores() {
     >
       <Link
         to="/matrix"
-        className="flex items-center gap-1 rounded-xs transition-colors hover:bg-surface-2 focus-visible:-outline-offset-2"
+        className="flex items-center gap-1.5 rounded-xs transition-colors hover:bg-surface-2 focus-visible:-outline-offset-2"
         // No `title`: each core carries its own tooltip, and the browser's native one for
         // the link fired on top of it. The label stays for anyone not using a pointer.
         aria-label="Open Simulation Matrix"
       >
-        {cores.map((core, i) => {
-          const holder = core.holder
+        {blocks.map((block) => {
+          const holder = block.holder
           let state: 'running' | 'queued' | 'warning' | 'idle' = 'idle'
           if (dailyLimitHit || sessionLost) {
             state = 'warning'
@@ -89,23 +92,34 @@ function HeaderCores() {
             idle: 'bg-status-idle text-ink-subtle border border-hairline hover:border-hairline-strong hover:text-ink',
           }[state]
 
+          const where =
+            block.span === 1
+              ? `Core ${block.start + 1}`
+              : `Cores ${block.start + 1}\u2013${block.start + block.span}`
+          const label =
+            state === 'idle'
+              ? 'Idle'
+              : state === 'running'
+                ? 'Running'
+                : state === 'warning'
+                  ? 'Warning'
+                  : 'Queued'
+
           const tooltipContent = (
             <div className="flex flex-col gap-1 text-caption">
               <span className="font-medium text-ink">
-                Core {i + 1}:{' '}
-                {state === 'idle'
-                  ? 'Idle'
-                  : state === 'running'
-                    ? 'Running'
-                    : state === 'warning'
-                      ? 'Warning'
-                      : 'Queued'}
+                {where}: {label}
               </span>
               {holder && (
                 <>
                   <span className="text-ink-muted">
                     {holder.region} · D{holder.delay} · {holder.universe}
                   </span>
+                  {block.span > 1 && (
+                    <span className="text-ink-muted">
+                      One simulation holding <span className="num">{block.span}</span> cores
+                    </span>
+                  )}
                   <span className="num text-ink-subtle">
                     {holder.task} ({fmt.pct(holder.progress, 0)})
                   </span>
@@ -115,17 +129,31 @@ function HeaderCores() {
           )
 
           return (
-            <Tooltip key={i} content={tooltipContent}>
-              <span
-                role="status"
-                aria-label={`Core ${i + 1}: ${state}`}
-                className={cn(
-                  'num flex size-7 shrink-0 items-center justify-center rounded-xs text-caption font-medium select-none transition-colors max-sm:size-5',
-                  stateClasses,
-                )}
-              >
-                <span className="max-sm:hidden">C{i + 1}</span>
-                <span className="sm:hidden">{i + 1}</span>
+            <Tooltip key={block.start} content={tooltipContent}>
+              {/* A hair between a block's own cores and the full gap between blocks, so two
+                  cores held by one simulation read as one wide mark rather than two. */}
+              <span className="flex gap-px">
+                {Array.from({ length: block.span }, (_, k) => (
+                  <span
+                    key={k}
+                    role="status"
+                    aria-label={`${where}: ${label}`}
+                    className={cn(
+                      'num flex size-7 shrink-0 items-center justify-center text-caption font-medium select-none transition-colors max-sm:size-5',
+                      stateClasses,
+                      block.span === 1
+                        ? 'rounded-xs'
+                        : k === 0
+                          ? 'rounded-l-xs'
+                          : k === block.span - 1
+                            ? 'rounded-r-xs'
+                            : 'rounded-none',
+                    )}
+                  >
+                    <span className="max-sm:hidden">C{block.start + k + 1}</span>
+                    <span className="sm:hidden">{block.start + k + 1}</span>
+                  </span>
+                ))}
               </span>
             </Tooltip>
           )

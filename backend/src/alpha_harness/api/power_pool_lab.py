@@ -36,6 +36,8 @@ class PowerPoolRequest(BaseModel):
     universe: str
     dataset_ids: list[str] = Field(default_factory=list, max_length=50)
     model: str | None = None
+    #: Empty keeps every neutralization BRAIN offers; anything here is drawn from instead.
+    neutralizations: list[str] = Field(default_factory=list, max_length=20)
     cores: int = Field(default=search.MAX_CORES, ge=1, le=search.MAX_CORES)
     simulations: int = Field(default=0, ge=0, le=search.MAX_SIMULATIONS)
 
@@ -122,9 +124,12 @@ async def _plan(body: PowerPoolRequest, state: Any) -> dict[str, Any]:
     schema = await state.metadata.cached_settings_schema()
     legal = legal_choices(schema, body.region, body.delay)
     universes = await synced_universes(state, legal, body.region, body.delay, body.universe)
-    # Every neutralization BRAIN offers, not only the four the other labs search: the LLM
-    # draws from the market's whole list, which is deliberate diversity.
-    neutralizations = [str(n) for n in choices(legal, "neutralization") if n != "NONE"]
+    # Every neutralization BRAIN offers, not only the four the other labs default to: the LLM
+    # draws from the market's whole list, which is deliberate diversity. A chosen few narrow
+    # that; choosing none keeps the whole list.
+    offered = [str(n) for n in choices(legal, "neutralization") if n != "NONE"]
+    wanted = set(body.neutralizations)
+    neutralizations = [n for n in offered if n in wanted] or offered
     if not universes:
         problems.append(
             f"No {body.region} delay {body.delay} market is downloaded. "

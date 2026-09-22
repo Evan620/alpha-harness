@@ -110,7 +110,7 @@ class Optimizer:
         self.endpoints = endpoints
         self.metadata = metadata
         self._on_change = on_change
-        #: Stored alphas: K-Ratio objectives, Evolution Lab parents, Power Pool Lab context.
+        #: Stored alphas: Evolution Lab parents, Power Pool Lab context.
         self.alphas = alphas
         self.backfill = backfill
         self.studies: dict[int, optuna.Study] = {}
@@ -638,7 +638,6 @@ def ranked(
                 "returns": stats.get("returns"),
                 "drawdown": stats.get("drawdown"),
                 "margin": stats.get("margin"),
-                "kRatio": result.get("kRatio"),
                 "feasible": t.feasible,
                 "failedChecks": result.get("failedChecks") or [],
                 "submittable": submittable(result),

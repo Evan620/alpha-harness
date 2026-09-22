@@ -69,6 +69,8 @@ class SourceSettings(Out):
     neutralization: str | None
     decay: int | None
     truncation: float | None
+    nan_handling: str
+    test_period: str
     max_trade: str
     max_position: str
 
@@ -93,8 +95,16 @@ class PreviewRequest(BaseModel):
 
     alpha_id: str = Field(default="", max_length=64, alias="alphaId")
     expression: str | None = Field(default=None, max_length=20_000)
-    decay: int = Field(default=0, ge=0, le=512)
-    truncation: float = Field(default=0.08, ge=0, le=1)
+    #: Each one left out keeps the source Alpha's own value, or the platform default when
+    #: there is no Alpha.
+    decay: int | None = Field(default=None, ge=0, le=512)
+    truncation: float | None = Field(default=None, ge=0, le=1)
+    nan_handling: Literal["ON", "OFF"] | None = Field(default=None, alias="nanHandling")
+    #: ``P{years}Y{months}M0D``, the shape BRAIN's own field takes; its bounds are
+    #: ``P0Y0M0D`` to ``P6Y0M0D``.
+    test_period: str | None = Field(
+        default=None, alias="testPeriod", pattern=r"^P[0-6]Y(?:[0-9]|1[01])M0D$"
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -111,6 +121,8 @@ class PreviewRequest(BaseModel):
             expression=self.expression.strip() if self.expression else None,
             decay=self.decay,
             truncation=self.truncation,
+            nan_handling=self.nan_handling,
+            test_period=self.test_period,
         )
 
 

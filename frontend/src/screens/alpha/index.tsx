@@ -31,7 +31,6 @@ import {
   drawdowns,
   hitRate,
   isQuickMode,
-  kRatio,
   rollingSharpe,
   underwater,
   verdictOf,
@@ -262,7 +261,7 @@ function PerformancePanel({
   const alphaId = view.alpha.alphaId
 
   // Cost is opt-in: at 0 bps the page is exactly what BRAIN reports, and nothing is fetched.
-  const [costText, setCostText] = useState('0')
+  const [costText, setCostText] = useState('5')
   const costBps = useDebounced(Math.min(100, Math.max(0, Number(costText) || 0)), 400)
   const cost = useQuery({
     queryKey: ['alpha', alphaId, 'after-cost', costBps],
@@ -287,7 +286,6 @@ function PerformancePanel({
       underwater: underwater(pnl, book),
       sharpe: rollingSharpe(days),
       episodes: drawdowns(pnl, book),
-      kRatio: kRatio(pnl),
       hitRate: hitRate(days),
     }
   }, [view.dates, view.pnl, view.investabilityPnl, book])
@@ -338,7 +336,6 @@ function PerformancePanel({
       bodyClassName="flex flex-col gap-4"
     >
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Metric size="sm" label="K-Ratio" value={fmt.ratio(series.kRatio)} />
         <Metric size="sm" label="Profitable days" value={fmt.pct(series.hitRate, 1)} />
         <Metric
           size="sm"

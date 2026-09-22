@@ -16,9 +16,18 @@ export interface MarketPick {
   universe: string
 }
 
-/** Where the sweep's expression comes from: an Alpha, or an expression typed in with the decay
- * and truncation to hold it at. */
-export type Source = { alphaId: string } | { expression: string; decay: number; truncation: number }
+/** How every simulation in the sweep is held, whatever market it lands in. Each is optional:
+ * left out, an Alpha's own value stands, or the platform default when there is no Alpha. */
+export interface Holding {
+  decay?: number
+  truncation?: number
+  nanHandling?: 'ON' | 'OFF'
+  /** `P0Y0M0D` to `P6Y0M0D`, BRAIN's own bounds. */
+  testPeriod?: string
+}
+
+/** Where the sweep's expression comes from: an Alpha, or an expression typed in. */
+export type Source = ({ alphaId: string } | { expression: string }) & Holding
 
 export type SampleRequest = Source & {
   /** Empty means every market the plan offers; likewise for each filter below. */

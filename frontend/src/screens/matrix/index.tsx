@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ClockIcon, EllipsisIcon } from 'lucide-react'
-import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { simulations } from '@/api/core'
 import { errorMessage } from '@/api/http'
@@ -14,7 +14,7 @@ import type { SimulationRow } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { DASH, fmt, secondsSince } from '@/lib/format'
 import { useCores, useLive } from '@/lib/live'
-import type { Cell, Core } from '@/lib/matrix'
+import { blockLabel, type Cell, type CoreBlock, coreBlocks } from '@/lib/matrix'
 import { useRefetchOn } from '@/lib/ws'
 import {
   Button,
@@ -124,12 +124,15 @@ function SimulationMatrix() {
   const slots = status?.slots ?? 8
   const maxBatch = status?.maxBatch ?? 10
   const { cores, overflow } = useCores(active, slots, maxBatch)
+  // One row per run rather than per core: a GLB run holds two cores and a region-agnostic one
+  // three, and drawing the rest as idle rows would show a matrix with room it does not have.
+  const blocks = useMemo(() => coreBlocks(cores, slots), [cores, slots])
   // The Alphas actually drawn, numbered across the whole matrix, so one list can be walked.
-  const perCore = cores.map((core) =>
-    core.holder ? core.cells.filter((cell) => cell.state !== 'EMPTY').length : 0,
+  const perRow = blocks.map((block) =>
+    block.core?.holder ? block.core.cells.filter((cell) => cell.state !== 'EMPTY').length : 0,
   )
-  const firstCellOfCore = perCore.map((_, i) => perCore.slice(0, i).reduce((a, b) => a + b, 0))
-  const roving = useRovingCells(perCore.reduce((a, b) => a + b, 0))
+  const firstCellOfRow = perRow.map((_, i) => perRow.slice(0, i).reduce((a, b) => a + b, 0))
+  const roving = useRovingCells(perRow.reduce((a, b) => a + b, 0))
 
   const [target, setTarget] = useState<SimulationRow | null>(null)
   const cancel = useMutation({
@@ -218,15 +221,14 @@ function SimulationMatrix() {
           className="flex flex-col"
           onKeyDown={roving.onKeyDown}
         >
-          {cores.map((core, i) => (
+          {blocks.map((block, i) => (
             <CoreRow
-              key={i}
-              index={i}
-              core={core}
+              key={block.start}
+              block={block}
               maxBatch={maxBatch}
               onCancel={setTarget}
               roving={roving}
-              firstCell={firstCellOfCore[i] ?? 0}
+              firstCell={firstCellOfRow[i] ?? 0}
             />
           ))}
         </div>
@@ -261,21 +263,21 @@ function SimulationMatrix() {
 }
 
 function CoreRow({
-  index,
-  core,
+  block,
   maxBatch,
   onCancel,
   roving,
   firstCell,
 }: {
-  index: number
-  core: Core
+  block: CoreBlock
   maxBatch: number
   onCancel: (row: SimulationRow) => void
   roving: Roving
   firstCell: number
 }) {
-  const { holder } = core
+  const holder = block.holder
+  const core = block.core
+  const label = blockLabel(block)
   // Numbered within the matrix, not the row: the empty slots are not part of the walk.
   let cellNumber = firstCell
   return (
@@ -290,13 +292,18 @@ function CoreRow({
         tabIndex={-1}
         className="flex flex-wrap items-center gap-x-3 gap-y-2 text-body-compact"
       >
-        <span className="num flex size-7 shrink-0 items-center justify-center rounded-xs border border-hairline-strong bg-surface-2 text-caption font-medium text-ink">
-          C{index + 1}
+        {/* A run that holds several cores names them all, so the row is not mistaken for
+            one core while the rest look free. */}
+        <span
+          className="num flex h-7 shrink-0 items-center justify-center rounded-xs border border-hairline-strong bg-surface-2 px-2 text-caption font-medium text-ink"
+          title={block.span > 1 ? `One simulation holding ${block.span} cores` : undefined}
+        >
+          {label}
         </span>
 
         <div
           role="group"
-          aria-label={`Core ${index + 1} batch key`}
+          aria-label={`${label} batch key`}
           className={cn(
             'flex min-h-7 flex-wrap items-center gap-x-4 rounded-md border px-3',
             holder ? 'border-hairline-strong bg-surface-2' : 'border-hairline bg-surface-1',
@@ -336,7 +343,7 @@ function CoreRow({
             </span>
             <Menu
               trigger={
-                <Button variant="ghost" size="icon-sm" aria-label={`Core ${index + 1} actions`}>
+                <Button variant="ghost" size="icon-sm" aria-label={`${label} actions`}>
                   <EllipsisIcon />
                 </Button>
               }
@@ -362,7 +369,7 @@ function CoreRow({
         className="grid min-w-0 gap-1.5"
         style={{ gridTemplateColumns: `repeat(${maxBatch}, minmax(0, 1fr))` }}
       >
-        {core.cells.map((cell, j) => {
+        {(core?.cells ?? []).map((cell, j) => {
           const drawn = holder !== null && cell.state !== 'EMPTY'
           const at = drawn ? cellNumber++ : null
           return <MatrixCell key={j} cell={cell} holder={holder} at={at} roving={roving} />

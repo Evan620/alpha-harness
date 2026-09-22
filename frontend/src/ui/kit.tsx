@@ -41,14 +41,19 @@ export const TEXT_TONE: Record<Tone, string> = {
 export const signTone = (v: number | null | undefined): Tone =>
   v == null || v === 0 ? 'neutral' : v > 0 ? 'profit' : 'loss'
 
-/** A BRAIN submission check result. */
+/**
+ * One BRAIN submission check, coloured by what it says on its own: passed, noted, or not
+ * a yes. A ``PENDING`` check has not been run, so it is not green — nothing about the Alpha
+ * has been established yet. Whether the Alpha as a whole can still come good is a different
+ * question with a different answer; see the Tasks results pane.
+ */
 export const checkTone = (result: CheckResult | null | undefined): Tone =>
   result === 'PASS'
     ? 'profit'
-    : result === 'FAIL' || result === 'ERROR'
-      ? 'loss'
-      : result
-        ? 'warn'
+    : result === 'WARNING'
+      ? 'warn'
+      : result === 'FAIL' || result === 'ERROR' || result === 'PENDING'
+        ? 'loss'
         : 'muted'
 
 // ── Layout ──────────────────────────────────────────────────────────────────────────────
@@ -343,7 +348,7 @@ export function Chips<V extends string>({
   value: V[]
   onChange: (value: V[]) => void
   label: string
-  disabled?: boolean
+  disabled?: boolean | undefined
 }) {
   return (
     <ToggleGroup

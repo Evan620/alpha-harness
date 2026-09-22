@@ -105,7 +105,6 @@ class RankedAlpha(Out):
     returns: float | None
     drawdown: float | None
     margin: float | None
-    k_ratio: float | None
     #: From the vault, which holds every simulated Alpha; a trial's own stats may lack them.
     long_count: int | None = None
     short_count: int | None = None

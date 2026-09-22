@@ -1,8 +1,8 @@
 /** Stored alphas: the local vault, sorted and filtered in DuckDB, served a page at a time. */
 
-import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { CopyIcon, GaugeIcon, SearchIcon } from 'lucide-react'
+import { CopyIcon, SearchIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/http'
@@ -46,7 +46,6 @@ const BOUNDS: { key: AlphaMetricKey; label: string; div: number }[] = [
   { key: 'returns', label: 'Returns %', div: 100 },
   { key: 'drawdown', label: 'Drawdown %', div: 100 },
   { key: 'margin', label: 'Margin bps', div: 10_000 },
-  { key: 'k_ratio', label: 'K-Ratio', div: 1 },
   { key: 'operator_count', label: 'Operators', div: 1 },
 ]
 
@@ -135,14 +134,6 @@ const COLUMNS: Column<AlphaRow>[] = [
     align: 'right',
     sortable: true,
     cell: (r) => fmt.bps(r.margin),
-  },
-  {
-    key: 'k_ratio',
-    header: 'K-Ratio',
-    width: '80px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => fmt.ratio(r.kRatio),
   },
   {
     key: 'operator_count',
@@ -262,14 +253,6 @@ export function Stored({ onOpen }: { onOpen: (alphaId: string) => void }) {
     value: v,
     label: v,
   }))
-
-  const kRatio = useMutation({
-    mutationFn: (ids: string[]) => pool.kRatio(ids),
-    onSuccess: (r) =>
-      toast.success(`Computing K-Ratio for ${fmt.int(r.alphas)} Alphas in the background`),
-    onError: (e) => toast.error(errorMessage(e)),
-  })
-  const kRatioIds = (selected.size ? [...selected] : rows.map((r) => r.alphaId)).slice(0, 100)
 
   const chosen = market ? picked : selected
   const toggle = (ids: string[], on: boolean) => {
@@ -435,35 +418,7 @@ export function Stored({ onOpen }: { onOpen: (alphaId: string) => void }) {
               Clear
             </Button>
           )}
-          {!market && (
-            <>
-              <span className="flex-1" />
-              <Button
-                size="sm"
-                loading={kRatio.isPending}
-                disabled={kRatioIds.length === 0}
-                onClick={() => kRatio.mutate(kRatioIds)}
-              >
-                {!kRatio.isPending && <GaugeIcon />}
-                Compute K-Ratio for{' '}
-                {selected.size ? (
-                  <>
-                    <span className="num">{fmt.int(kRatioIds.length)}</span> selected
-                  </>
-                ) : (
-                  <>
-                    Top <span className="num">{fmt.int(kRatioIds.length)}</span>
-                  </>
-                )}
-              </Button>
-            </>
-          )}
         </div>
-        {!market && selected.size > 100 && (
-          <p className="text-body-compact text-status-warning">
-            K-Ratio runs on the first 100 selected Alphas.
-          </p>
-        )}
         {page.isError && rows.length > 0 && (
           <ErrorNotice error={page.error} title="Could not read stored Alphas" />
         )}

@@ -441,7 +441,7 @@ async def page(alpha_id: str, state: State, refresh: Refresh = False) -> AlphaVi
 async def after_cost(
     alpha_id: str,
     state: State,
-    cost_bps: Annotated[float, Query(alias="costBps", ge=0, le=100)] = 2.0,
+    cost_bps: Annotated[float, Query(alias="costBps", ge=0, le=100)] = 5.0,
 ) -> PortfolioResult:
     """This Alpha's PnL, gross and after a trading cost of ``costBps`` on every dollar traded.
 

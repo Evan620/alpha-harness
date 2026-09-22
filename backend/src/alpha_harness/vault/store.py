@@ -11,12 +11,9 @@ if the series are kept. The stored series rebuilds the platform's own figures (s
 from __future__ import annotations
 
 import json
-import math
 from datetime import date, datetime
-from itertools import accumulate
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import structlog
 
 from ..db.duck import ALPHA_COLUMNS, TRAIN_COLUMNS, Catalog
@@ -30,15 +27,6 @@ log = structlog.get_logger(__name__)
 #: 3: turnover calibrated to ``yearly-stats`` where it misses by more than rounding. A series
 #: stored under an older version is fetched again on the next sync.
 SERIES_VERSION = 3
-
-SERIES_STATS = (
-    "series_sharpe",
-    "series_turnover",
-    "series_fitness",
-    "series_returns",
-    "series_drawdown",
-    "series_margin",
-)
 
 
 def checks_json(alpha: Alpha) -> str | None:
@@ -119,7 +107,6 @@ ALPHA_METRICS: dict[str, str] = {
     "drawdown": "a.drawdown",
     "margin": "a.margin",
     "operator_count": "a.operator_count",
-    "k_ratio": "a.k_ratio",
     "calmar": "CASE WHEN a.drawdown > 0 THEN a.returns / a.drawdown END",
     "date_created": "a.date_created",
     "date_submitted": "a.date_submitted",
@@ -168,7 +155,6 @@ def _page_row(r: dict[str, Any]) -> dict[str, Any]:
         "drawdown": r["drawdown"],
         "margin": r["margin"],
         "operatorCount": r["operator_count"],
-        "kRatio": r["k_ratio"],
         "calmar": r["calmar"],
         "dateCreated": _iso(r["date_created"]),
         "dateSubmitted": _iso(r["date_submitted"]),
@@ -186,29 +172,6 @@ def _page_row(r: dict[str, Any]) -> dict[str, Any]:
 
 def _json_list(raw: Any) -> list[str]:
     return [str(v) for v in json.loads(raw)] if isinstance(raw, str) else []
-
-
-def k_ratio(daily_pnl: list[float]) -> float | None:
-    """Kestner's K-Ratio (2003 form) of a daily PnL series.
-
-    A straight line is fitted to cumulative PnL against the day number; the slope over
-    its standard error, divided by the number of days, rewards steady
-    growth over the same total earned in a few jumps.
-    """
-    n = len(daily_pnl)
-    if n < 3:
-        return None
-    y = list(accumulate(daily_pnl))
-    x_mean = (n + 1) / 2
-    y_mean = sum(y) / n
-    xs = [i - x_mean for i in range(1, n + 1)]
-    sxx = sum(x * x for x in xs)
-    slope = sum(x * (v - y_mean) for x, v in zip(xs, y, strict=True)) / sxx
-    sse = sum((v - y_mean - slope * x) ** 2 for x, v in zip(xs, y, strict=True))
-    if sse <= 0:
-        return None
-    standard_error = math.sqrt(sse / (n - 2) / sxx)
-    return slope / (standard_error * n)
 
 
 def _as_date(value: Any) -> date:
@@ -292,42 +255,7 @@ class AlphaVault:
             await self.catalog.upsert(
                 "alpha", ("alpha_id", "series_version"), [(alpha_id, SERIES_VERSION)]
             )
-            await self._cache_stats({alpha_id: (days, stored.get(alpha_id) or {})})
         return written
-
-    async def cache_series_stats(self, alpha_ids: list[str]) -> None:
-        """Rebuild and keep the in-sample figures of these Alphas from their stored series."""
-        stored, series = await self.by_ids(alpha_ids), await self.series(alpha_ids)
-        await self._cache_stats(
-            {
-                a: ([(d, p, t) for d, (p, t) in sorted(series[a].items())], stored.get(a) or {})
-                for a in alpha_ids
-                if series.get(a)
-            }
-        )
-
-    async def _cache_stats(
-        self, alphas: dict[str, tuple[list[tuple[date, float, float]], dict[str, Any]]]
-    ) -> None:
-        rows: list[tuple[Any, ...]] = []
-        for alpha_id, (days, info) in alphas.items():
-            full = metrics.with_closing(days, info)
-            found = metrics.stats(
-                np.array([p for _, p, _ in full]), np.array([t for _, _, t in full])
-            )
-            if found is not None:
-                rows.append(
-                    (
-                        alpha_id,
-                        found.sharpe,
-                        found.turnover,
-                        found.fitness,
-                        found.returns,
-                        found.drawdown,
-                        found.margin,
-                    )
-                )
-        await self.catalog.upsert("alpha", ("alpha_id", *SERIES_STATS), rows)
 
     async def save_checks(self, alpha_id: str, checks: list[dict[str, Any]]) -> None:
         """Replace one alpha's check array and touch nothing else.
@@ -480,7 +408,7 @@ class AlphaVault:
             SELECT a.alpha_id, a.name, a.sim_type, a.status, a.region, a.universe, a.delay,
                    a.neutralization, a.decay, a.truncation, a.expression, a.sharpe,
                    a.fitness, a.turnover, a.returns, a.drawdown, a.margin,
-                   a.operator_count, a.k_ratio, {ALPHA_METRICS["calmar"]} AS calmar,
+                   a.operator_count, {ALPHA_METRICS["calmar"]} AS calmar,
                    a.date_created, a.date_submitted, a.long_count, a.short_count,
                    a.max_trade, a.max_position, a.classifications, a.pyramids,
                    a.train_sharpe, a.test_sharpe,
@@ -499,14 +427,6 @@ class AlphaVault:
         return await self.catalog.query(
             "SELECT date, pnl FROM alpha_pnl WHERE alpha_id = ? ORDER BY date", [alpha_id]
         )
-
-    async def k_ratio(self, alpha_id: str) -> float | None:
-        """K-Ratio from the stored daily series, cached on the alpha row."""
-        rows = await self.pnl_series(alpha_id)
-        value = k_ratio([float(r["pnl"]) for r in rows])
-        if value is not None:
-            await self.catalog.upsert("alpha", ("alpha_id", "k_ratio"), [(alpha_id, value)])
-        return value
 
     async def series_length(self, alpha_id: str) -> int:
         value = await self.catalog.scalar(
@@ -555,13 +475,17 @@ class AlphaVault:
         return grouped
 
     async def submitted_members(self) -> list[dict[str, Any]]:
-        """Every submitted Alpha with what the Portfolio page filters on."""
+        """Every submitted Alpha with what the Portfolio page filters on.
+
+        The figures are BRAIN's own, as it reported them for the Alpha. Nothing here is
+        recomputed: only the combination of several Alphas is ours to work out, because
+        that is the one thing BRAIN does not publish.
+        """
         return await self.catalog.query(
             f"""
             SELECT a.alpha_id, a.name, a.region, a.delay, a.universe, a.max_trade,
                    a.max_position, a.tags, a.classifications, a.pyramids, a.date_submitted,
-                   a.series_sharpe, a.series_turnover, a.series_fitness, a.series_returns,
-                   a.series_drawdown, a.series_margin,
+                   a.sharpe, a.turnover, a.fitness, a.returns, a.drawdown, a.margin,
                    EXISTS (
                        SELECT 1 FROM alpha_pnl p
                        WHERE p.alpha_id = a.alpha_id AND p.turnover IS NOT NULL
