@@ -5,7 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
-import { ExternalLinkIcon, LogOutIcon } from 'lucide-react'
+import { ExternalLinkIcon, LogOutIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from 'lucide-react'
 import { useEffect } from 'react'
 import { toast } from 'sonner'
 import { create } from 'zustand'
@@ -36,7 +36,15 @@ const useVisited = create<{
   ),
 )
 
-export function Sidebar({ you, collapsed }: { you: Today['you']; collapsed: boolean }) {
+export function Sidebar({
+  you,
+  collapsed,
+  onToggle,
+}: {
+  you: Today['you']
+  collapsed: boolean
+  onToggle?: (() => void) | undefined
+}) {
   const queryClient = useQueryClient()
   const area = useRouterState({
     select: (s) => s.location.pathname.split('/')[1] ?? '',
@@ -131,6 +139,25 @@ export function Sidebar({ you, collapsed }: { you: Today['you']; collapsed: bool
       </nav>
 
       <div className="flex flex-col gap-1 border-t border-hairline p-2">
+        {onToggle && (
+          <button
+            type="button"
+            onClick={onToggle}
+            title={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+            aria-label={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+            className={cn(
+              'flex h-8 items-center gap-3 rounded-md text-body text-ink-subtle transition-colors hover:bg-surface-1 hover:text-ink',
+              collapsed ? 'justify-center' : 'px-2',
+            )}
+          >
+            {collapsed ? (
+              <PanelLeftOpenIcon className="size-4" />
+            ) : (
+              <PanelLeftCloseIcon className="size-4" />
+            )}
+            {!collapsed && <span>Collapse</span>}
+          </button>
+        )}
         {/* Both above the account, where someone reading a screenshot looks for them. The
             update stays on the rail as an icon — it is the one thing here worth interrupting
             for — while the version hides: 52px has no room for a date. */}

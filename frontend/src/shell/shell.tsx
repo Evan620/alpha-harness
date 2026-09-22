@@ -6,8 +6,9 @@ import { useQuery } from '@tanstack/react-query'
 import { Outlet } from '@tanstack/react-router'
 import { RefreshCwIcon, ServerCrashIcon, XIcon } from 'lucide-react'
 import { Suspense, useState } from 'react'
-import { Group, Panel, useDefaultLayout } from 'react-resizable-panels'
+import { Group, Panel, useDefaultLayout, usePanelRef } from 'react-resizable-panels'
 import { AgentPanel } from '@/agent/panel'
+import { useVision } from '@/agent/store'
 import { today } from '@/api/core'
 import { errorMessage } from '@/api/http'
 import type { Today } from '@/api/types'
@@ -69,43 +70,67 @@ function Workspace({ you }: { you: Today['you'] }) {
     storage: localStorage,
     onlySaveAfterUserInteractions: true,
   })
+  const sidebar = usePanelRef()
+  const visionOpen = useVision((s) => s.open)
+  const setVisionOpen = useVision((s) => s.setOpen)
+  // Only one sidebar is wide at a time. While Vision is open the resizable nav leaves the Group
+  // and a fixed icon rail stands in for it; expanding the rail closes Vision and the nav comes
+  // back at its own size. Swapping panels rather than resizing one keeps this exact: the
+  // library's collapse/expand compare percentages of a Group whose width Vision changes.
+  const railForVision = wide && visionOpen
   const rail = !wide || dragCollapsed
+  const toggleNav = () => {
+    const panel = sidebar.current
+    if (!panel) return
+    if (panel.isCollapsed()) panel.expand()
+    else panel.collapse()
+  }
   return (
     <>
-      <Group
-        id="shell"
-        orientation="horizontal"
-        defaultLayout={defaultLayout}
-        onLayoutChanged={onLayoutChanged}
-        className="h-svh"
-      >
-        <Panel
-          key="sidebar"
-          id="sidebar"
-          defaultSize={wide ? 216 : 52}
-          minSize={wide ? 180 : 52}
-          maxSize={wide ? 320 : 52}
-          collapsible={wide}
-          collapsedSize={52}
-          onResize={(size) => setDragCollapsed(size.inPixels <= 64)}
-        >
-          <Sidebar you={you} collapsed={rail} />
-        </Panel>
-        {wide && <ResizeHandle key="handle" variant="edge" />}
-        <Panel key="workspace" id="workspace" minSize={wide ? 480 : 0} className="min-w-0">
-          <div className="flex h-full min-h-0 min-w-0 flex-col">
-            <Header />
-            <VerificationBanner />
-            <main className="min-h-0 flex-1 overflow-auto">
-              <Suspense fallback={<ScreenSkeleton />}>
-                <Outlet />
-              </Suspense>
-            </main>
+      <div className="flex h-svh min-w-0">
+        {railForVision && (
+          <div className="h-full w-[52px] shrink-0">
+            <Sidebar you={you} collapsed onToggle={() => setVisionOpen(false)} />
           </div>
-        </Panel>
-      </Group>
+        )}
+        <Group
+          id="shell"
+          orientation="horizontal"
+          defaultLayout={defaultLayout}
+          onLayoutChanged={onLayoutChanged}
+          className="h-full min-w-0 flex-1"
+        >
+          {!railForVision && (
+            <Panel
+              key="sidebar"
+              id="sidebar"
+              defaultSize={wide ? 216 : 52}
+              minSize={wide ? 180 : 52}
+              maxSize={wide ? 320 : 52}
+              collapsible={wide}
+              collapsedSize={52}
+              panelRef={sidebar}
+              onResize={(size) => setDragCollapsed(size.inPixels <= 64)}
+            >
+              <Sidebar you={you} collapsed={rail} onToggle={wide ? toggleNav : undefined} />
+            </Panel>
+          )}
+          {wide && !railForVision && <ResizeHandle key="handle" variant="edge" />}
+          <Panel key="workspace" id="workspace" minSize={wide ? 480 : 0} className="min-w-0">
+            <div className="flex h-full min-h-0 min-w-0 flex-col">
+              <Header />
+              <VerificationBanner />
+              <main className="min-h-0 flex-1 overflow-auto">
+                <Suspense fallback={<ScreenSkeleton />}>
+                  <Outlet />
+                </Suspense>
+              </main>
+            </div>
+          </Panel>
+        </Group>
+        <AgentPanel />
+      </div>
       <CommandMenu />
-      <AgentPanel />
     </>
   )
 }

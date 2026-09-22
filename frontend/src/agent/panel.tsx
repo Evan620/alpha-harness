@@ -24,6 +24,7 @@ import { cn } from '@/lib/cn'
 import { NAV } from '@/shell/nav'
 import { Badge, Button, Textarea } from '@/ui/kit'
 import { Markdown } from './markdown'
+import { useVision } from './store'
 
 type Part =
   | { kind: 'text'; text: string }
@@ -111,7 +112,9 @@ function apply(parts: Part[], e: AgentEvent): Part[] {
 }
 
 export function AgentPanel() {
-  const [open, setOpen] = useState(false)
+  const open = useVision((s) => s.open)
+  const setOpen = useVision((s) => s.setOpen)
+  const toggle = useVision((s) => s.toggle)
   const [entries, setEntries] = useState<Entry[]>([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -127,12 +130,12 @@ export function AgentPanel() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault()
-        setOpen((o) => !o)
+        toggle()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [toggle])
 
   const content = useRef<HTMLDivElement>(null)
   const [following, setFollowing] = useState(true)
@@ -265,7 +268,7 @@ export function AgentPanel() {
   return (
     <aside
       aria-label="Vision"
-      className="fixed top-0 right-0 bottom-0 z-40 flex w-[460px] max-w-full flex-col border-l border-hairline bg-surface-1 shadow-xl"
+      className="flex h-full w-[440px] max-w-[50vw] shrink-0 flex-col border-l border-hairline bg-surface-1"
     >
       <header className="flex items-center gap-2 border-b border-hairline px-3 py-2">
         <EyeIcon className="size-4 text-ink-muted" />
