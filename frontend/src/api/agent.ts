@@ -28,6 +28,7 @@ export type AgentEvent =
   | { type: 'start'; threadId: number }
   | { type: 'text'; delta: string }
   | { type: 'thinking'; delta: string }
+  | { type: 'status'; delta: string }
   | {
       type: 'tool_start'
       id: string

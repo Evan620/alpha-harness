@@ -7,6 +7,7 @@ person approves in the panel rather than something the model does on its own.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import time
@@ -361,52 +362,21 @@ class AgentService:
         }
         if tools:
             payload["tools"] = TOOLS
-        content: list[str] = []
-        calls: dict[int, dict[str, Any]] = {}
-        tokens = 0
-        async with (
-            httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client,
-            client.stream(
-                "POST",
-                f"{spec.base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {secret}"},
-                json=payload,
-            ) as response,
-        ):
-            if response.status_code >= 400:
-                body = (await response.aread()).decode(errors="replace")
-                raise RuntimeError(f"LLM {response.status_code}: {body[:300]}")
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                except ValueError:
-                    continue
-                if chunk.get("usage"):
-                    tokens = int(chunk["usage"].get("total_tokens") or tokens)
-                for choice in chunk.get("choices") or []:
-                    delta = choice.get("delta") or {}
-                    if delta.get("reasoning_content"):
-                        yield "thinking", delta["reasoning_content"]
-                    if delta.get("content"):
-                        content.append(delta["content"])
-                        yield "text", delta["content"]
-                    for tc in delta.get("tool_calls") or []:
-                        slot = calls.setdefault(
-                            int(tc.get("index", 0)),
-                            {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
-                        )
-                        if tc.get("id"):
-                            slot["id"] = tc["id"]
-                        fn = tc.get("function") or {}
-                        if fn.get("name"):
-                            slot["function"]["name"] += fn["name"]
-                        if fn.get("arguments"):
-                            slot["function"]["arguments"] += fn["arguments"]
+        url = f"{spec.base_url.rstrip('/')}/chat/completions"
+        state: dict[str, Any] = {}
+        # Z.AI's own rate limit is the only one left: wait it out rather than fail the turn.
+        for attempt in range(6):
+            try:
+                async for item in _stream_once(url, secret, payload, state):
+                    yield item
+                break
+            except _RateLimited as limited:
+                if attempt == 5:
+                    raise RuntimeError("Z.AI kept rate-limiting after several waits.") from None
+                wait = min(limited.retry_after or 2 ** (attempt + 1), 30.0)
+                yield "status", f"Z.AI rate limit, waiting {wait:.0f}s"
+                await asyncio.sleep(wait)
+        content, calls, tokens = state["content"], state["calls"], state["tokens"]
         try:
             await self.state.llm.ledger.record(key_id, MODEL, tokens)
         except Exception:
@@ -416,6 +386,64 @@ class AgentService:
             message["tool_calls"] = [calls[i] for i in sorted(calls)]
         yield "message", message
 
+
+class _RateLimited(Exception):  # noqa: N818
+    def __init__(self, retry_after: float | None) -> None:
+        super().__init__("rate limited")
+        self.retry_after = retry_after
+
+
+async def _stream_once(
+    url: str, secret: str, payload: dict[str, Any], state: dict[str, Any]
+) -> AsyncIterator[tuple[str, Any]]:
+    """One streamed completion. Raises _RateLimited on a 429 before anything is emitted."""
+    content: list[str] = []
+    calls: dict[int, dict[str, Any]] = {}
+    tokens = 0
+    async with (
+        httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client,
+        client.stream(
+            "POST", url, headers={"Authorization": f"Bearer {secret}"}, json=payload
+        ) as response,
+    ):
+        if response.status_code == 429:
+            retry = response.headers.get("retry-after")
+            raise _RateLimited(float(retry) if retry and retry.replace(".", "").isdigit() else None)
+        if response.status_code >= 400:
+            body = (await response.aread()).decode(errors="replace")
+            raise RuntimeError(f"LLM {response.status_code}: {body[:300]}")
+        async for line in response.aiter_lines():
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except ValueError:
+                continue
+            if chunk.get("usage"):
+                tokens = int(chunk["usage"].get("total_tokens") or tokens)
+            for choice in chunk.get("choices") or []:
+                delta = choice.get("delta") or {}
+                if delta.get("reasoning_content"):
+                    yield "thinking", delta["reasoning_content"]
+                if delta.get("content"):
+                    content.append(delta["content"])
+                    yield "text", delta["content"]
+                for tc in delta.get("tool_calls") or []:
+                    slot = calls.setdefault(
+                        int(tc.get("index", 0)),
+                        {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                    )
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        slot["function"]["arguments"] += fn["arguments"]
+    state.update(content=content, calls=calls, tokens=tokens)
 
 def _http_status(result: Any) -> int | None:
     return result.get("status") if isinstance(result, dict) else None

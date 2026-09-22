@@ -101,6 +101,8 @@ function apply(parts: Part[], e: AgentEvent): Part[] {
       )
     case 'proposal':
       return [...parts, { kind: 'proposal', proposal: e.proposal }]
+    case 'status':
+      return [...parts, { kind: 'error', text: e.delta }]
     case 'error':
       return [...parts, { kind: 'error', text: e.message }]
     default:

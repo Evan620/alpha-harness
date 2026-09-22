@@ -62,6 +62,10 @@ class Provider:
         }
 
 
+#: Effectively no local cap, for a paid plan the operator chose not to meter here.
+UNLIMITED = 1_000_000_000
+
+
 def _model(
     model_id: str,
     label: str,
@@ -355,15 +359,16 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.z.ai/api/coding/paas/v4",
         onboarding_url="https://z.ai/manage-apikey/apikey-list",
         key_hint="32 characters, a dot, then 16",
-        tier_note="Your GLM Coding Plan subscription. Limits below are the plan's.",
+        tier_note="Your GLM Coding Plan subscription. No local limits: Z.AI's own limits apply.",
         paid=True,
         models=(
             _model(
                 "glm-5.3",
                 "GLM-5.3",
                 "zai",
-                rpm=20,
-                rpd=2_000,
+                rpm=UNLIMITED,
+                rpd=0,
+                tpm=UNLIMITED,
                 summary="Strong reasoning model, 1M context. The better answer of the two.",
                 recommended=True,
             ),
@@ -371,8 +376,9 @@ PROVIDERS: dict[str, Provider] = {
                 "glm-5.3-flash",
                 "GLM-5.3 Flash",
                 "zai",
-                rpm=30,
-                rpd=5_000,
+                rpm=UNLIMITED,
+                rpd=0,
+                tpm=UNLIMITED,
                 summary="Faster and cheaper on the same plan. For bulk work.",
                 bulk=True,
             ),
