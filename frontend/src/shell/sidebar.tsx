@@ -6,7 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { ExternalLinkIcon, LogOutIcon } from 'lucide-react'
-import { Fragment, useEffect } from 'react'
+import { useEffect } from 'react'
 import { toast } from 'sonner'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -17,6 +17,7 @@ import { cn } from '@/lib/cn'
 import { useRefetchOn } from '@/lib/ws'
 import { Menu } from '@/ui/overlay'
 import { NAV } from './nav'
+import { UpdateBadge, VersionBadge } from './update'
 
 /** Areas a new consultant has to open once: Data (download fields) and AI (add a key). They flash until visited. */
 const ONBOARDING: readonly string[] = ['data', 'ai']
@@ -99,54 +100,46 @@ export function Sidebar({ you, collapsed }: { you: Today['you']; collapsed: bool
 
       <nav aria-label="Main" className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
         {NAV.map((item) => (
-          <Fragment key={item.to}>
-            <Link
-              to={item.to}
-              title={item.label}
-              {...(collapsed && { 'aria-label': item.label })}
-              {...(!collapsed && 'nested' in item ? { activeOptions: { exact: true } } : {})}
-              className={cn(
-                'group flex h-8 items-center gap-3 rounded-md text-body text-ink-subtle transition-colors hover:bg-surface-1 hover:text-ink data-[status=active]:bg-surface-2 data-[status=active]:text-ink',
-                collapsed ? 'justify-center' : 'px-2',
-                ONBOARDING.includes(item.area) &&
-                  !visited.includes(item.area) &&
-                  'animate-attention text-status-warning motion-reduce:bg-status-warning-tint',
-              )}
-            >
-              <item.icon
-                className="size-4 shrink-0 transition-colors group-hover:text-ink group-data-[status=active]:text-primary"
-                aria-hidden
-              />
-              {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
-              {!collapsed && item.area === 'pool' && total > 0 && (
-                <span
-                  className="num rounded-pill border border-pnl-positive-edge bg-pnl-positive-tint px-1.5 py-0.5 text-caption font-medium text-pnl-positive"
-                  title="Submittable Alphas"
-                >
-                  {total}
-                </span>
-              )}
-            </Link>
-            {!collapsed && 'nested' in item && (
-              // A guide line down from the parent's icon, so its children read as its pages.
-              <div className="ml-4 flex flex-col gap-0.5 border-l border-hairline-strong pl-2">
-                {item.tabs.map((sub) => (
-                  <Link
-                    key={sub.tab}
-                    to={sub.to}
-                    title={sub.label}
-                    className="flex h-7 items-center rounded-md px-2 text-body text-ink-subtle transition-colors hover:bg-surface-1 hover:text-ink data-[status=active]:bg-surface-2 data-[status=active]:text-ink"
-                  >
-                    <span className="truncate">{sub.label}</span>
-                  </Link>
-                ))}
-              </div>
+          <Link
+            key={item.to}
+            to={item.to}
+            title={item.label}
+            {...(collapsed && { 'aria-label': item.label })}
+            className={cn(
+              'group flex h-8 items-center gap-3 rounded-md text-body text-ink-subtle transition-colors hover:bg-surface-1 hover:text-ink data-[status=active]:bg-surface-2 data-[status=active]:text-ink',
+              collapsed ? 'justify-center' : 'px-2',
+              ONBOARDING.includes(item.area) &&
+                !visited.includes(item.area) &&
+                'animate-attention text-status-warning motion-reduce:bg-status-warning-tint',
             )}
-          </Fragment>
+          >
+            <item.icon
+              className="size-4 shrink-0 transition-colors group-hover:text-ink group-data-[status=active]:text-primary"
+              aria-hidden
+            />
+            {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+            {!collapsed && item.area === 'pool' && total > 0 && (
+              <span
+                className="num rounded-pill border border-pnl-positive-edge bg-pnl-positive-tint px-1.5 py-0.5 text-caption font-medium text-pnl-positive"
+                title="Submittable Alphas"
+              >
+                {total}
+              </span>
+            )}
+          </Link>
         ))}
       </nav>
 
-      <div className="border-t border-hairline p-2">
+      <div className="flex flex-col gap-1 border-t border-hairline p-2">
+        {/* Both above the account, where someone reading a screenshot looks for them. The
+            update stays on the rail as an icon — it is the one thing here worth interrupting
+            for — while the version hides: 52px has no room for a date. */}
+        <UpdateBadge collapsed={collapsed} />
+        {!collapsed && (
+          <div className="px-1.5 pt-0.5 pb-1">
+            <VersionBadge />
+          </div>
+        )}
         <Menu
           align="start"
           trigger={

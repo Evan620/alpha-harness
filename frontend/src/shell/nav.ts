@@ -25,7 +25,9 @@ export const AI_TABS = [
   { tab: 'assistant', label: 'Assistant' },
 ] as const
 
-/** Shown nested under Research Labs in the sidebar, each with its own route. */
+/** The labs, each with its own route. Listed on the Research Labs screen and in ⌘K rather
+ *  than under the sidebar entry: four children under one item is most of the sidebar, and
+ *  the screen already introduces them properly. */
 export const LAB_TABS = [
   { tab: 'search', label: 'Search Lab', to: '/labs/search' },
   { tab: 'template', label: 'Template Lab', to: '/labs/template' },
@@ -33,7 +35,8 @@ export const LAB_TABS = [
   { tab: 'power-pool', label: 'LLM Power Pool Lab', to: '/labs/power-pool' },
 ] as const
 
-/** Shown nested under Tools in the sidebar, each with its own route. */
+/** The tools, each with its own route. Listed on the Tools screen and in ⌘K rather than
+ *  under the sidebar entry, for the same reason as the labs. */
 export const TOOL_TABS = [
   { tab: 'settings-sampler', label: 'Settings Sampler', to: '/tools/settings-sampler' },
   { tab: 'submission-planner', label: 'Submission Planner', to: '/tools/submission-planner' },
@@ -68,7 +71,6 @@ export const NAV = [
     label: 'Research Labs',
     icon: FlaskConicalIcon,
     tabs: LAB_TABS,
-    nested: true,
   },
   {
     to: '/tools',
@@ -76,7 +78,6 @@ export const NAV = [
     label: 'Tools',
     icon: WrenchIcon,
     tabs: TOOL_TABS,
-    nested: true,
   },
   {
     to: '/tasks',

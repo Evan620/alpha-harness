@@ -88,9 +88,7 @@ const tools = createRoute({ getParentRoute: () => root, path: '/tools' })
 const toolsIndex = createRoute({
   getParentRoute: () => tools,
   path: '/',
-  beforeLoad: () => {
-    throw redirect({ to: '/tools/settings-sampler', search: { alpha: undefined } })
-  },
+  component: lazyRouteComponent(() => import('@/screens/tools'), 'ToolsScreen'),
 })
 const settingsSampler = createRoute({
   getParentRoute: () => tools,

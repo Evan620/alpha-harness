@@ -82,7 +82,8 @@ function useUpdateStatus() {
 /**
  * The build, always on screen. Releases are dated, so this answers "is this from this morning
  * or from six months ago" in a screenshot or a support message without anyone having to go
- * looking. `Alpha` says what the dates do not: nothing here is settled yet.
+ * looking. Visibility is the caller's to decide: it sits in the sidebar, which hides its
+ * labels when collapsed to the rail.
  */
 export function VersionBadge() {
   const queryClient = useQueryClient()
@@ -106,8 +107,7 @@ export function VersionBadge() {
   }
 
   return (
-    <span className="hidden items-center gap-1.5 text-body-compact text-ink-subtle sm:flex">
-      <span className="rounded-xs border border-hairline px-1.5 py-px text-caption">Alpha</span>
+    <span className="flex items-center gap-1.5 text-body-compact text-ink-subtle">
       <span className="num">{status.data?.isRelease ? current : 'dev'}</span>
       {problem && (
         <button
@@ -130,14 +130,35 @@ export function VersionBadge() {
 }
 
 /** The one thing the in-app updater cannot fix for you. */
-function LauncherNotice({ version, url }: { version: string | null; url: string }) {
+function LauncherNotice({
+  version,
+  url,
+  collapsed,
+}: {
+  version: string | null
+  url: string
+  collapsed: boolean
+}) {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
-        <TriangleAlertIcon aria-hidden />
-        Update AlphaHarness.exe
-      </Button>
+      {collapsed ? (
+        <Button
+          size="icon-sm"
+          variant="secondary"
+          className="self-center"
+          aria-label="Update AlphaHarness.exe"
+          title="A newer AlphaHarness.exe is out"
+          onClick={() => setOpen(true)}
+        >
+          <TriangleAlertIcon aria-hidden />
+        </Button>
+      ) : (
+        <Button size="sm" variant="secondary" className="w-full" onClick={() => setOpen(true)}>
+          <TriangleAlertIcon aria-hidden />
+          Update AlphaHarness.exe
+        </Button>
+      )}
       <Dialog
         open={open}
         onOpenChange={setOpen}
@@ -167,7 +188,8 @@ function LauncherNotice({ version, url }: { version: string | null; url: string 
   )
 }
 
-export function UpdateBadge() {
+/** ``collapsed`` is the sidebar's icon rail, where there is room for a button but not a word. */
+export function UpdateBadge({ collapsed = false }: { collapsed?: boolean }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const status = useUpdateStatus()
@@ -192,15 +214,34 @@ export function UpdateBadge() {
   // system tray, say — reaches nobody until they fetch the exe themselves. Nothing else in
   // the app can say so: from inside, an out-of-date launcher looks exactly like a current one.
   if (data?.launcherOutdated)
-    return <LauncherNotice version={data.launcher} url={data.url || data.releasesUrl} />
+    return (
+      <LauncherNotice
+        version={data.launcher}
+        url={data.url || data.releasesUrl}
+        collapsed={collapsed}
+      />
+    )
   if (!data?.available) return null
 
   return (
     <>
-      <Button size="sm" variant="primary" onClick={() => setOpen(true)}>
-        <DownloadIcon aria-hidden />
-        Update to {data.latest}
-      </Button>
+      {collapsed ? (
+        <Button
+          size="icon-sm"
+          variant="primary"
+          className="self-center"
+          aria-label={`Update to ${data.latest}`}
+          title={`Update to ${data.latest}`}
+          onClick={() => setOpen(true)}
+        >
+          <DownloadIcon aria-hidden />
+        </Button>
+      ) : (
+        <Button size="sm" variant="primary" className="w-full" onClick={() => setOpen(true)}>
+          <DownloadIcon aria-hidden />
+          Update to {data.latest}
+        </Button>
+      )}
       <Dialog
         open={open}
         onOpenChange={setOpen}
