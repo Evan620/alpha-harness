@@ -93,9 +93,7 @@ async def _probe_regions(state: Any) -> set[str]:
     if not schema:
         return set()
     base = {"instrumentType": "EQUITY"}
-    # All regions is left unprobed, so a region-agnostic sweep is offered Max Trade only.
-    # BRAIN decides Max Position per child region there ("Compatibility constraints" in
-    # docs/learn/advanced-topics/region-agnostic-alpha), which this two-way probe cannot read.
+    # All regions never reaches the sampler (see `_plan`), so there is nothing to probe.
     regions = [str(r) for r in valid_values(schema, "region", base) if r != REGION_AGNOSTIC_REGION]
     gate = asyncio.Semaphore(PROBE_CONCURRENCY)
 
@@ -224,7 +222,11 @@ async def plan(
         here = {
             (str(r["region"]), int(r["delay"]), str(r["universe"])): float(r["coverage"] or 0.0)
             for r in rows
-            if r["instrument_type"] == "EQUITY"
+            # All regions is left out: the catalog holds it once it has been synced, but a
+            # sweep there sends region-agnostic simulations, which cost four of the day's
+            # allowance each. A sampler that quietly spends four times its estimate is worse
+            # than one that does not offer the market.
+            if r["instrument_type"] == "EQUITY" and r["region"] != REGION_AGNOSTIC_REGION
         }
         if not here:
             problems.append(f"{field} is not downloaded in any market. Sync from BRAIN first.")

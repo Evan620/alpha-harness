@@ -8,7 +8,6 @@
 import { Link } from '@tanstack/react-router'
 import {
   ArrowUpRightIcon,
-  LightbulbIcon,
   ListChecksIcon,
   type LucideIcon,
   SlidersHorizontalIcon,
@@ -19,15 +18,20 @@ import { Page, PageHeader } from '@/ui/kit'
 const ICONS: Record<(typeof TOOL_TABS)[number]['tab'], LucideIcon> = {
   'settings-sampler': SlidersHorizontalIcon,
   'submission-planner': ListChecksIcon,
-  tips: LightbulbIcon,
 }
 
 /** What each one is for, since a name alone does not say when to reach for it. */
 const ABOUT: Record<(typeof TOOL_TABS)[number]['tab'], string> = {
-  'settings-sampler': 'Sweep one Alpha across settings to find where it works best.',
+  'settings-sampler': 'Sweep one Alpha across Simulation Settings to find where it works best.',
   'submission-planner': 'Pick which Alphas to submit, and in what order.',
-  tips: "BRAIN's own advice on Turnover, Fitness, Sharpe and Prod Correlation.",
 }
+
+/** Each tool's own search params. Both take one and default it to nothing, and a `Link`
+ *  cannot infer that through the union of routes. */
+const SEARCH = {
+  'settings-sampler': { alpha: undefined },
+  'submission-planner': { task: undefined },
+} as const
 
 const number = (index: number) => String(index + 1).padStart(2, '0')
 
@@ -42,6 +46,7 @@ export function ToolsScreen() {
             <Link
               key={tool.tab}
               to={tool.to}
+              search={SEARCH[tool.tab]}
               className="panel-highlight group flex min-h-56 flex-col justify-between rounded-lg border border-hairline bg-surface-1 p-6 transition-colors hover:border-hairline-strong hover:bg-surface-2"
             >
               <div className="flex items-start justify-between">

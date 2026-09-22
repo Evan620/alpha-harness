@@ -84,10 +84,6 @@ const choices = (list: { value: string | number; label: string }[] | null | unde
     label: String(c.label ?? c.value),
   }))
 
-/** Keeps BRAIN's own label for every region but `ALL`, which says nothing about what it does. */
-const named = (choice: Choice): Choice =>
-  choice.value === REGION_AGNOSTIC ? { ...choice, label: regionLabel(choice.value) } : choice
-
 /** Legal regions, delays, universes and neutralizations for a scope, from BRAIN's schema. */
 export function useScopeOptions(scope: Scope): ScopeOptions {
   const query = useQuery({
@@ -107,7 +103,11 @@ export function useScopeOptions(scope: Scope): ScopeOptions {
   return useMemo(() => {
     const universes = choices(fields?.['universe']?.choices)
     return {
-      regions: choices(fields?.['region']?.choices).map(named),
+      // BRAIN's own labels, `ALL` included. The picker is a list of region codes in a
+      // monospace control, and "All Regions" among USA, GLB and EUR reads as a different
+      // kind of thing and stretches the menu to fit it. `regionLabel` spells it out where
+      // there is prose to spell it out in.
+      regions: choices(fields?.['region']?.choices),
       delays: choices(fields?.['delay']?.choices),
       universes,
       neutralizations: choices(fields?.['neutralization']?.choices),

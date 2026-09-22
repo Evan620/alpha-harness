@@ -116,12 +116,6 @@ const submissionPlanner = createRoute({
   ),
 })
 
-const tips = createRoute({
-  getParentRoute: () => tools,
-  path: 'tips',
-  component: lazyRouteComponent(() => import('@/screens/tools/tips'), 'TipsScreen'),
-})
-
 const tasks = createRoute({
   getParentRoute: () => root,
   path: '/tasks',
@@ -184,7 +178,7 @@ const routeTree = root.addChildren([
   matrix,
   data.addChildren([dataIndex, dataTab]),
   labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab]),
-  tools.addChildren([toolsIndex, settingsSampler, submissionPlanner, tips]),
+  tools.addChildren([toolsIndex, settingsSampler, submissionPlanner]),
   tasks,
   pool.addChildren([poolIndex, poolTab]),
   portfolio,
