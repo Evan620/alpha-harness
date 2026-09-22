@@ -1,10 +1,13 @@
-"""The in-app agent: one turn, an approval decision, and the action catalog."""
+"""Vision, the in-app agent: streamed turns and decisions (NDJSON), plus the action catalog."""
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..agent.loop import AgentService
@@ -50,15 +53,29 @@ def _context(ctx: PageContext) -> dict[str, Any]:
     }
 
 
+def _ndjson(events: AsyncIterator[dict[str, Any]]) -> StreamingResponse:
+    async def body() -> AsyncIterator[bytes]:
+        async for event in events:
+            yield (json.dumps(event, default=str) + "\n").encode()
+
+    return StreamingResponse(
+        body(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/turn")
-async def turn(payload: TurnRequest, request: Request) -> dict[str, Any]:
-    return await _service(request).turn(payload.thread_id, payload.text, _context(payload.context))
+async def turn(payload: TurnRequest, request: Request) -> StreamingResponse:
+    service = _service(request)
+    return _ndjson(service.turn(payload.thread_id, payload.text, _context(payload.context)))
 
 
 @router.post("/proposals/{proposal_id}/decide")
-async def decide(proposal_id: str, payload: DecisionRequest, request: Request) -> dict[str, Any]:
-    return await _service(request).decide(
-        proposal_id, payload.payload_hash, payload.approve, _context(payload.context)
+async def decide(proposal_id: str, payload: DecisionRequest, request: Request) -> StreamingResponse:
+    service = _service(request)
+    return _ndjson(
+        service.decide(proposal_id, payload.payload_hash, payload.approve, _context(payload.context))
     )
 
 

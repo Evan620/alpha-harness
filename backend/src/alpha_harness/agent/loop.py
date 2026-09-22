@@ -1,4 +1,4 @@
-"""The in-app agent: a tool-calling loop over every UI action, aware of the current page.
+"""Vision, the in-app agent: a streaming tool loop over every UI action, aware of the page.
 
 The model sees five tools. Four only read; ``call_action`` reaches the 158 API operations
 and always goes through :meth:`ApprovalGate.dispatch`, so a write becomes a proposal the
@@ -10,6 +10,7 @@ from __future__ import annotations
 import itertools
 import json
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,7 +26,7 @@ from .registry import AgentContext, UnknownCapability
 log = structlog.get_logger(__name__)
 
 MODEL = "glm-5.3"
-MAX_ROUNDS = 10
+MAX_ROUNDS = 16
 HISTORY_LIMIT = 40
 VISIBLE_CHARS = 3_500
 
@@ -102,6 +103,9 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+BRAIN_ALPHA = "https://platform.worldquantbrain.com/alpha/"
+
+
 def _system(context: dict[str, Any]) -> str:
     page = guide.page_for(context.get("pathname") or "/")
     here = (
@@ -111,20 +115,32 @@ def _system(context: dict[str, Any]) -> str:
     )
     visible = (context.get("visibleText") or "")[:VISIBLE_CHARS]
     scope = context.get("scope")
-    return f"""You are the agent inside Alpha Harness, a local studio for WorldQuant BRAIN research.
-You can do anything the person can do in this UI, through tools, and you help them understand the
-platform quickly.
+    return f"""You are Vision, the agent built into Alpha Harness, a local studio for WorldQuant BRAIN
+research. You can do anything the person can do in this UI through tools, you can see the page
+they are on, and your job is to make them effective on the platform fast.
 
 HOW TO WORK
-- Answer questions about the page they are on first; they are looking at it.
+- Answer about the page they are on first; they are looking at it.
 - To act: find_actions -> describe_action (for anything with a body) -> call_action.
-- Reads run at once. Writes, simulations and LLM spends come back needs_approval: say plainly what
-  you proposed and that it is waiting for their Approve click. Never say it is done until it ran.
-- Human-only (sign-in, keys) and blocked actions: tell them where to do it themselves.
-- Never submit alphas to BRAIN; that is not something you can do.
-- Use navigate when showing them a page helps. Use real numbers from tool results, never invent.
-- Plain, short language. Explain BRAIN terms (Sharpe, fitness, turnover, pyramid, Power Pool)
-  in one clause when first used. Do not use em-dashes.
+- Reads run at once. Writes, simulations and LLM spends come back needs_approval: say in one line
+  what you proposed and that it waits for their Approve click. Never claim it ran until it did.
+- Human-only (sign-in, keys, update, quit) and blocked actions: say where they do it themselves.
+- You never submit alphas to BRAIN.
+- Use navigate when showing them a page helps. Only use numbers that came from a tool or from
+  their screen; never invent one.
+
+HOW TO WRITE (rendered as Markdown)
+- Lead with the answer in one or two sentences, with the key number in **bold**.
+- Then short sections or bullets. Keep it under ~180 words unless they ask for a tour or detail.
+- Tables for comparisons of 3+ items (alphas, datasets, checks).
+- LINK EVERYTHING you mention, never write a bare route:
+  - app pages: [Data Explorer](/data), [Submittable](/pool/submittable), [Search Lab](/labs/search),
+    [Tasks](/tasks), a task [Task 12](/tasks/12)
+  - an alpha: [a1B2c3D](/alpha/a1B2c3D) in the app, and [on BRAIN]({BRAIN_ALPHA}a1B2c3D)
+- Explain a BRAIN term (Sharpe, fitness, turnover, pyramid, Power Pool, near-miss) in a clause the
+  first time only.
+- End with at most one concrete next step, phrased as an offer.
+- No em-dashes. No filler like "Great question".
 
 THE PLATFORM (every page)
 {guide.site_map()}
@@ -158,25 +174,37 @@ class AgentService:
 
     # -- public ----------------------------------------------------------
 
-    async def turn(self, thread_id: int | None, text: str, context: dict[str, Any]) -> dict[str, Any]:
+    async def turn(
+        self, thread_id: int | None, text: str, context: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
         thread = self._thread(thread_id)
         thread.messages.append({"role": "user", "content": text})
-        return await self._run(thread, context)
+        async for event in self._run(thread, context):
+            yield event
 
     async def decide(
         self, proposal_id: str, payload_hash: str | None, approve: bool, context: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> AsyncIterator[dict[str, Any]]:
         proposal = next((p for p in self.gate.pending() if p.id == proposal_id), None)
         thread = self._thread(proposal.thread_id if proposal else None)
-        if approve:
-            result = await self.gate.approve(proposal_id, payload_hash or "")
-            outcome = json.dumps(result.to_dict(), default=str)[:4_000]
-            note = f"[The person APPROVED {result.tool}. It ran. Result: {outcome}]"
-        else:
-            rejected = await self.gate.reject(proposal_id, reason="Rejected in the agent panel")
-            note = f"[The person REJECTED {rejected.tool}. Do not retry it unless asked.]"
-        thread.messages.append({"role": "user", "content": note + " Continue, briefly."})
-        return await self._run(thread, context)
+        try:
+            if approve:
+                yield {"type": "tool_start", "id": proposal_id, "tool": "approved",
+                       "label": proposal.label if proposal else proposal_id, "args": {}}
+                result = await self.gate.approve(proposal_id, payload_hash or "")
+                outcome = json.dumps(result.to_dict(), default=str)
+                yield {"type": "tool_end", "id": proposal_id, "status": result.status,
+                       "httpStatus": _http_status(result.result), "preview": _preview(result.result)}
+                note = f"[The person APPROVED {result.tool}. It ran. Result: {outcome[:4_000]}]"
+            else:
+                rejected = await self.gate.reject(proposal_id, reason="Rejected in the agent panel")
+                note = f"[The person REJECTED {rejected.tool}. Do not retry it unless asked.]"
+        except ApprovalError as exc:
+            yield {"type": "error", "message": str(exc)}
+            return
+        thread.messages.append({"role": "user", "content": note + " Report the outcome briefly."})
+        async for event in self._run(thread, context):
+            yield event
 
     def catalog(self) -> list[dict[str, Any]]:
         return list(self.index.values())
@@ -190,51 +218,76 @@ class AgentService:
         self.threads[thread.id] = thread
         return thread
 
-    async def _run(self, thread: Thread, context: dict[str, Any]) -> dict[str, Any]:
-        steps: list[dict[str, Any]] = []
-        proposals: list[dict[str, Any]] = []
-        navigate_to: str | None = None
-        reply = ""
-        for _ in range(MAX_ROUNDS):
-            message = await self._complete(thread, context)
-            thread.messages.append(message)
-            calls = message.get("tool_calls") or []
-            if not calls:
-                reply = str(message.get("content") or "")
-                break
-            for call in calls:
-                fn = call.get("function") or {}
-                name = fn.get("name", "")
-                try:
-                    args = json.loads(fn.get("arguments") or "{}")
-                except ValueError:
-                    args = {}
-                output, step = await self._tool(thread, call.get("id", ""), name, args, context)
-                steps.append(step)
-                if step.get("proposal"):
-                    proposals.append(step["proposal"])
-                if name == "navigate" and step.get("status") == "ok":
-                    navigate_to = str(args.get("to") or "")
+    async def _run(self, thread: Thread, context: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "start", "threadId": thread.id}
+        try:
+            for _ in range(MAX_ROUNDS):
+                message: dict[str, Any] = {}
+                async for kind, value in self._complete(thread, context):
+                    if kind == "message":
+                        message = value
+                    else:
+                        yield {"type": kind, "delta": value}
+                thread.messages.append(message)
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    break
+                for call in calls:
+                    fn = call.get("function") or {}
+                    name = fn.get("name", "")
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except ValueError:
+                        args = {}
+                    call_id = call.get("id", "")
+                    yield {"type": "tool_start", "id": call_id, "tool": name, "args": args,
+                           "label": self._label(name, args)}
+                    output, step = await self._tool(thread, call_id, name, args, context)
+                    yield {"type": "tool_end", "id": call_id, "status": step["status"],
+                           "httpStatus": step.get("httpStatus"), "preview": _preview(output)}
+                    if step.get("proposal"):
+                        yield {"type": "proposal", "proposal": step["proposal"]}
+                    if name == "navigate" and step["status"] == "ok":
+                        yield {"type": "navigate", "to": str(args.get("to") or "")}
+                    thread.messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": json.dumps(output, default=str)[: actions.RESULT_CHARS + 500],
+                        }
+                    )
+            else:
                 thread.messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.get("id", ""),
-                        "content": json.dumps(output, default=str)[:actions.RESULT_CHARS + 500],
-                    }
+                    {"role": "user", "content": "[Step limit reached. Do not call tools. Answer now with what you have.]"}
                 )
-        else:
-            reply = "I stopped after several steps without finishing. Tell me how to continue."
-        thread.messages = thread.messages[-HISTORY_LIMIT:]
-        while thread.messages and thread.messages[0].get("role") == "tool":
-            thread.messages.pop(0)
-        thread.updated = time.time()
-        return {
-            "threadId": thread.id,
-            "reply": reply,
-            "steps": steps,
-            "proposals": proposals,
-            "navigate": navigate_to,
-        }
+                message = {}
+                async for kind, value in self._complete(thread, context, tools=False):
+                    if kind == "message":
+                        message = value
+                    else:
+                        yield {"type": kind, "delta": value}
+                thread.messages.append(message)
+        except Exception as exc:
+            log.warning("agent.turn_failed", exc_info=True)
+            yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
+        finally:
+            thread.messages = thread.messages[-HISTORY_LIMIT:]
+            while thread.messages and thread.messages[0].get("role") == "tool":
+                thread.messages.pop(0)
+            thread.updated = time.time()
+        yield {"type": "done", "threadId": thread.id}
+
+    def _label(self, name: str, args: dict[str, Any]) -> str:
+        if name == "call_action":
+            entry = self.index.get(str(args.get("name") or ""))
+            return f"{entry['method']} {entry['path']}" if entry else str(args.get("name") or "")
+        if name == "find_actions":
+            return f"search: {args.get('query', '')}"
+        if name == "describe_action":
+            return str(args.get("name") or "")
+        if name in {"explain_page", "navigate"}:
+            return str(args.get("route") or args.get("to") or "")
+        return ""
 
     async def _tool(
         self, thread: Thread, call_id: str, name: str, args: dict[str, Any], context: dict[str, Any]
@@ -291,7 +344,10 @@ class AgentService:
             step["status"] = "error"
             return {"error": f"{type(exc).__name__}: {exc}"}, step
 
-    async def _complete(self, thread: Thread, context: dict[str, Any]) -> dict[str, Any]:
+    async def _complete(
+        self, thread: Thread, context: dict[str, Any], *, tools: bool = True
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """Stream one completion: yields ("text"|"thinking", delta), then ("message", msg)."""
         info = self.state.llm.model_for(MODEL)
         key_id = await self.state.llm.keys.choose(info)
         secret = await self.state.llm.keys.secret(key_id)
@@ -299,29 +355,78 @@ class AgentService:
         payload = {
             "model": MODEL,
             "messages": [{"role": "system", "content": _system(context)}, *thread.messages],
-            "tools": TOOLS,
             "temperature": 0.2,
             "max_tokens": 4_096,
+            "stream": True,
         }
-        async with httpx.AsyncClient(timeout=180.0) as client:
-            response = await client.post(
+        if tools:
+            payload["tools"] = TOOLS
+        content: list[str] = []
+        calls: dict[int, dict[str, Any]] = {}
+        tokens = 0
+        async with (
+            httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client,
+            client.stream(
+                "POST",
                 f"{spec.base_url.rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {secret}"},
                 json=payload,
-            )
-        if response.status_code >= 400:
-            raise RuntimeError(f"LLM {response.status_code}: {response.text[:300]}")
-        body = response.json()
-        usage = body.get("usage") or {}
+            ) as response,
+        ):
+            if response.status_code >= 400:
+                body = (await response.aread()).decode(errors="replace")
+                raise RuntimeError(f"LLM {response.status_code}: {body[:300]}")
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except ValueError:
+                    continue
+                if chunk.get("usage"):
+                    tokens = int(chunk["usage"].get("total_tokens") or tokens)
+                for choice in chunk.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    if delta.get("reasoning_content"):
+                        yield "thinking", delta["reasoning_content"]
+                    if delta.get("content"):
+                        content.append(delta["content"])
+                        yield "text", delta["content"]
+                    for tc in delta.get("tool_calls") or []:
+                        slot = calls.setdefault(
+                            int(tc.get("index", 0)),
+                            {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                        )
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            slot["function"]["name"] += fn["name"]
+                        if fn.get("arguments"):
+                            slot["function"]["arguments"] += fn["arguments"]
         try:
-            await self.state.llm.ledger.record(key_id, MODEL, int(usage.get("total_tokens") or 0))
+            await self.state.llm.ledger.record(key_id, MODEL, tokens)
         except Exception:
             log.warning("agent.ledger_failed", exc_info=True)
-        message = ((body.get("choices") or [{}])[0]).get("message") or {}
-        out: dict[str, Any] = {"role": "assistant", "content": message.get("content") or ""}
-        if message.get("tool_calls"):
-            out["tool_calls"] = message["tool_calls"]
-        return out
+        message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
+        if calls:
+            message["tool_calls"] = [calls[i] for i in sorted(calls)]
+        yield "message", message
+
+
+def _http_status(result: Any) -> int | None:
+    return result.get("status") if isinstance(result, dict) else None
+
+
+def _preview(output: Any) -> str:
+    """A short, human-readable glimpse of a tool result for the live trace."""
+    if isinstance(output, dict) and "result" in output and output.get("status") == "executed":
+        output = (output.get("result") or {}).get("data", output)
+    text = json.dumps(output, default=str, ensure_ascii=False)
+    return text if len(text) <= 700 else text[:700] + "…"
 
 
 def _agent_context(context: dict[str, Any]) -> AgentContext:

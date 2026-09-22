@@ -188,7 +188,10 @@ def page_for(route: str) -> Page | None:
 
 
 def site_map() -> str:
-    return "\n".join(f"- {p.route} — {p.title}: {p.summary}" for p in PAGES)
+    def shown(route: str) -> str:
+        return "/alpha/<alphaId> (only with a real id)" if route == "/alpha" else route
+
+    return "\n".join(f"- {shown(p.route)}: {p.title}. {p.summary}" for p in PAGES)
 
 
 def explain(route: str) -> dict[str, object]:
