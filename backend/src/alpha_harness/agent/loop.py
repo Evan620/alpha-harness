@@ -1,8 +1,9 @@
 """Vision, the in-app agent: a streaming tool loop over every UI action, aware of the page.
 
 The model sees five tools. Four only read; ``call_action`` reaches the 158 API operations
-and always goes through :meth:`ApprovalGate.dispatch`, so a write becomes a proposal the
-person approves in the panel rather than something the model does on its own.
+and always goes through :meth:`ApprovalGate.dispatch`. In ask mode a write becomes a proposal
+the person approves in the panel; in auto mode (chosen by the person, see permissions.py) the
+gate runs it at once.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from fastapi import FastAPI
 from ..llm.providers import get as provider_spec
 from . import actions, guide
 from .approval import ApprovalError, ApprovalGate
+from .permissions import Permissions
 from .registry import AgentContext, UnknownCapability
 
 log = structlog.get_logger(__name__)
@@ -73,9 +75,9 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "call_action",
             "description": (
-                "Perform one action exactly as the UI would. Reads run immediately; anything "
-                "that writes, simulates or spends LLM budget returns needs_approval and waits "
-                "for the person to press Approve."
+                "Perform one action exactly as the UI would. Reads run immediately. Anything "
+                "that writes, simulates or spends LLM budget runs immediately in auto mode, or "
+                "returns needs_approval and waits for the person's Approve in ask mode."
             ),
             "parameters": {
                 "type": "object",
@@ -107,6 +109,21 @@ TOOLS: list[dict[str, Any]] = [
 BRAIN_ALPHA = "https://platform.worldquantbrain.com/alpha/"
 
 
+def _mode_rules(mode: str) -> str:
+    if mode == "auto":
+        return (
+            "- Permission mode is AUTO (the person chose it): actions run as soon as you call\n"
+            "  them. Before anything destructive they did not explicitly ask for (deleting,\n"
+            "  dropping the queue, stopping work, a big simulation spend) say what you will do and\n"
+            "  ask in chat first. Report what actually ran, with the real result."
+        )
+    return (
+        "- Permission mode is ASK: reads run at once; writes, simulations and LLM spends come back\n"
+        "  needs_approval. Say in one line what you proposed and that it waits for their Approve\n"
+        "  click. Never claim it ran until it did. They can switch to auto with /permissions."
+    )
+
+
 def _system(context: dict[str, Any]) -> str:
     page = guide.page_for(context.get("pathname") or "/")
     here = (
@@ -123,8 +140,7 @@ they are on, and your job is to make them effective on the platform fast.
 HOW TO WORK
 - Answer about the page they are on first; they are looking at it.
 - To act: find_actions -> describe_action (for anything with a body) -> call_action.
-- Reads run at once. Writes, simulations and LLM spends come back needs_approval: say in one line
-  what you proposed and that it waits for their Approve click. Never claim it ran until it did.
+{_mode_rules(context.get("mode") or "ask")}
 - Human-only (sign-in, keys, update, quit) and blocked actions: say where they do it themselves.
 - You never submit alphas to BRAIN.
 - Use navigate when showing them a page helps. Only use numbers that came from a tool or from
@@ -170,6 +186,7 @@ class AgentService:
         self.registry, self.index = actions.build(app)
         self.registry.validate()
         self.gate = ApprovalGate(state, self.registry)
+        self.permissions = Permissions(state.settings.data_dir / "vision.json")
         self.threads: dict[int, Thread] = {}
         self._ids = itertools.count(1)
 
@@ -220,7 +237,8 @@ class AgentService:
         return thread
 
     async def _run(self, thread: Thread, context: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        yield {"type": "start", "threadId": thread.id}
+        context = {**context, "mode": self.permissions.mode}
+        yield {"type": "start", "threadId": thread.id, "mode": self.permissions.mode}
         try:
             for _ in range(MAX_ROUNDS):
                 message: dict[str, Any] = {}
@@ -326,8 +344,18 @@ class AgentService:
                     thread_id=thread.id,
                     call_id=call_id,
                 )
+                # The person's chosen mode (set only from the UI). In auto the gate still
+                # records, hashes and executes once; it just does not wait for a click.
+                if (
+                    self.permissions.mode == "auto"
+                    and result.status == "needs_approval"
+                    and result.proposal is not None
+                ):
+                    result = await self.gate.approve(
+                        result.proposal.id, result.proposal.payload_hash
+                    )
                 step["status"] = result.status
-                if result.proposal is not None:
+                if result.status == "needs_approval" and result.proposal is not None:
                     step["proposal"] = result.proposal.to_dict()
                 if result.status == "executed" and isinstance(result.result, dict):
                     step["httpStatus"] = result.result.get("status")

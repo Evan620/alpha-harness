@@ -1,6 +1,6 @@
 /** Vision, the in-app agent: streamed turns and decisions (NDJSON). */
 
-import { ApiError, normalise } from './http'
+import { ApiError, http, normalise } from './http'
 
 export interface PageContext {
   pathname: string
@@ -84,7 +84,17 @@ async function stream(
   if (buffer.trim()) onEvent(JSON.parse(buffer) as AgentEvent)
 }
 
+export type PermissionMode = 'ask' | 'auto'
+
+export interface Permissions {
+  mode: PermissionMode
+  alwaysYours: { action: string; summary: string; tier: string }[]
+}
+
 export const agent = {
+  permissions: () => http.get<Permissions>('/api/agent/permissions'),
+  setPermissions: (mode: PermissionMode) =>
+    http.put<Permissions>('/api/agent/permissions', { mode }),
   turn: (
     body: { text: string; thread_id: number | null; context: PageContext },
     onEvent: (e: AgentEvent) => void,

@@ -24,6 +24,7 @@ import { cn } from '@/lib/cn'
 import { NAV } from '@/shell/nav'
 import { Badge, Button, Textarea } from '@/ui/kit'
 import { Markdown } from './markdown'
+import { ModeChip, PermissionsCard } from './permissions'
 import { useVision } from './store'
 
 type Part =
@@ -46,7 +47,10 @@ type Part =
     }
   | { kind: 'error'; text: string }
 
-type Entry = { role: 'user'; text: string } | { role: 'agent'; parts: Part[]; live: boolean }
+type Entry =
+  | { role: 'user'; text: string }
+  | { role: 'agent'; parts: Part[]; live: boolean }
+  | { role: 'permissions' }
 
 const STARTERS = [
   'What is this page for?',
@@ -200,10 +204,21 @@ export function AgentPanel() {
     }
   }
 
+  const showPermissions = () => {
+    setEntries((prev) => [...prev.filter((e) => e.role !== 'permissions'), { role: 'permissions' }])
+  }
+
   const send = (message: string) => {
     const trimmed = message.trim()
     if (!trimmed || busy) return
     setText('')
+    // Slash commands are handled here and never reach the model.
+    if (trimmed === '/permissions') return showPermissions()
+    if (trimmed === '/new' || trimmed === '/clear') {
+      setEntries([])
+      setThreadId(null)
+      return
+    }
     setEntries((prev) => [...prev, { role: 'user', text: trimmed }])
     void run((onEvent, signal) =>
       agent.turn(
@@ -276,6 +291,7 @@ export function AgentPanel() {
           <div className="text-body font-medium text-ink">Vision</div>
           <div className="truncate text-[11px] text-ink-subtle">Sees {pathname}</div>
         </div>
+        <ModeChip onClick={showPermissions} />
         <Button
           variant="ghost"
           size="sm"
@@ -315,8 +331,11 @@ export function AgentPanel() {
             {entries.length === 0 && (
               <div className="space-y-2">
                 <p className="text-body text-ink-muted">
-                  I can see this page and do anything you can do in the app. Anything that writes,
-                  runs simulations or spends LLM budget waits for your Approve.
+                  I can see this page and do anything you can do in the app. Type{' '}
+                  <code className="rounded-xs bg-surface-3 px-1 font-mono text-[12px]">
+                    /permissions
+                  </code>{' '}
+                  to choose whether I ask before acting.
                 </p>
                 {STARTERS.map((s) => (
                   <button
@@ -331,7 +350,12 @@ export function AgentPanel() {
               </div>
             )}
             {entries.map((entry, i) =>
-              entry.role === 'user' ? (
+              entry.role === 'permissions' ? (
+                <PermissionsCard
+                  key={i}
+                  onDone={() => setEntries((prev) => prev.filter((e) => e.role !== 'permissions'))}
+                />
+              ) : entry.role === 'user' ? (
                 <div
                   key={i}
                   className="ml-10 rounded-sm bg-surface-3 px-3 py-2 text-body whitespace-pre-wrap text-ink"

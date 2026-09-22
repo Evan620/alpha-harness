@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -77,6 +77,36 @@ async def decide(proposal_id: str, payload: DecisionRequest, request: Request) -
     return _ndjson(
         service.decide(proposal_id, payload.payload_hash, payload.approve, _context(payload.context))
     )
+
+
+class PermissionsRequest(BaseModel):
+    mode: Literal["ask", "auto"]
+
+
+@router.get("/permissions")
+async def get_permissions(request: Request) -> dict[str, Any]:
+    service = _service(request)
+    return {"mode": service.permissions.mode, "alwaysYours": _always_yours(service)}
+
+
+@router.put("/permissions")
+async def set_permissions(payload: PermissionsRequest, request: Request) -> dict[str, Any]:
+    """Set by the person in the UI. Excluded from Vision's catalog, so it cannot set its own."""
+    service = _service(request)
+    service.permissions.set(payload.mode)
+    return {"mode": service.permissions.mode, "alwaysYours": _always_yours(service)}
+
+
+def _always_yours(service: AgentService) -> list[dict[str, str]]:
+    rows = [
+        {"action": f"{e['method']} {e['path']}", "summary": e["summary"], "tier": e["tier"]}
+        for e in service.index.values()
+        if e["tier"] in {"human_only", "blocked"}
+    ]
+    rows.append(
+        {"action": "Submit an alpha to BRAIN", "summary": "Blocked in the BRAIN client", "tier": "blocked"}
+    )
+    return rows
 
 
 @router.get("/proposals")
