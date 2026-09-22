@@ -407,6 +407,10 @@ export function TasksScreen() {
             columns={columns}
             rowKey={(t) => String(t.id)}
             onRowClick={(t) => setSelectedId(t.id)}
+            // Held through hover, which otherwise repaints the row as if nothing were picked.
+            rowClass={(t) =>
+              t.id === selectedId ? 'bg-primary-subtle hover:bg-primary-subtle' : undefined
+            }
             loading={list.isPending}
             error={list.error}
           />
@@ -726,7 +730,7 @@ function TaskDetail({
             render={<Link to="/tasks/$taskId" params={{ taskId: String(task.id) }} />}
           >
             <ExternalLinkIcon />
-            Open full results
+            Open Full Results
           </Button>
         </div>
         <DataTable
