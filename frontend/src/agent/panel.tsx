@@ -134,16 +134,36 @@ export function AgentPanel() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run on every streamed update to follow the tail
+  const content = useRef<HTMLDivElement>(null)
+  const [following, setFollowing] = useState(true)
+  const follow = (on: boolean) => {
+    pinned.current = on
+    setFollowing(on)
+  }
+  const toBottom = () => {
+    const el = scroller.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
+
+  // Follow every change in height (streamed text, Markdown re-render, tool cards opening),
+  // not just new entries. Only an explicit scroll up by the reader stops it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the panel mounts its scroller only when open
   useEffect(() => {
-    if (pinned.current) scroller.current?.scrollTo({ top: scroller.current.scrollHeight })
-  }, [entries])
+    const node = content.current
+    if (!node) return
+    const observer = new ResizeObserver(() => {
+      if (pinned.current) toBottom()
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [open])
 
   const run = async (
     starter: (onEvent: (e: AgentEvent) => void, signal: AbortSignal) => Promise<void>,
   ) => {
     setBusy(true)
-    pinned.current = true
+    follow(true)
+    requestAnimationFrame(toBottom)
     const controller = new AbortController()
     abort.current = controller
     setEntries((prev) => [...prev, { role: 'agent', parts: [], live: true }])
@@ -269,49 +289,75 @@ export function AgentPanel() {
         </Button>
       </header>
 
-      <div
-        ref={scroller}
-        onScroll={(e) => {
-          const el = e.currentTarget
-          pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-        }}
-        className="min-h-0 flex-1 space-y-4 overflow-auto px-3 py-3"
-      >
-        {entries.length === 0 && (
-          <div className="space-y-2">
-            <p className="text-body text-ink-muted">
-              I can see this page and do anything you can do in the app. Anything that writes, runs
-              simulations or spends LLM budget waits for your Approve.
-            </p>
-            {STARTERS.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => send(s)}
-                className="block w-full rounded-sm border border-hairline bg-surface-2 px-3 py-2 text-left text-body text-ink hover:bg-surface-3"
-              >
-                {s}
-              </button>
-            ))}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scroller}
+          role="log"
+          aria-live="polite"
+          onWheel={(e) => {
+            if (e.deltaY < 0) follow(false)
+          }}
+          onTouchMove={() => follow(false)}
+          onKeyDown={(e) => {
+            if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) follow(false)
+          }}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            if (!pinned.current && el.scrollHeight - el.scrollTop - el.clientHeight < 24)
+              follow(true)
+          }}
+          className="h-full overflow-auto px-3 py-3"
+        >
+          <div ref={content} className="space-y-4">
+            {entries.length === 0 && (
+              <div className="space-y-2">
+                <p className="text-body text-ink-muted">
+                  I can see this page and do anything you can do in the app. Anything that writes,
+                  runs simulations or spends LLM budget waits for your Approve.
+                </p>
+                {STARTERS.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => send(s)}
+                    className="block w-full rounded-sm border border-hairline bg-surface-2 px-3 py-2 text-left text-body text-ink hover:bg-surface-3"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+            {entries.map((entry, i) =>
+              entry.role === 'user' ? (
+                <div
+                  key={i}
+                  className="ml-10 rounded-sm bg-surface-3 px-3 py-2 text-body whitespace-pre-wrap text-ink"
+                >
+                  {entry.text}
+                </div>
+              ) : (
+                <AgentEntry
+                  key={i}
+                  parts={entry.parts}
+                  live={entry.live}
+                  busy={busy}
+                  onDecide={decide}
+                />
+              ),
+            )}
           </div>
-        )}
-        {entries.map((entry, i) =>
-          entry.role === 'user' ? (
-            <div
-              key={i}
-              className="ml-10 rounded-sm bg-surface-3 px-3 py-2 text-body whitespace-pre-wrap text-ink"
-            >
-              {entry.text}
-            </div>
-          ) : (
-            <AgentEntry
-              key={i}
-              parts={entry.parts}
-              live={entry.live}
-              busy={busy}
-              onDecide={decide}
-            />
-          ),
+        </div>
+        {!following && (
+          <button
+            type="button"
+            onClick={() => {
+              follow(true)
+              toBottom()
+            }}
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-hairline-strong bg-surface-2 px-3 py-1 text-body-compact text-ink shadow-md hover:bg-surface-3"
+          >
+            Jump to latest ↓
+          </button>
         )}
       </div>
 
