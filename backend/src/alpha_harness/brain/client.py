@@ -17,12 +17,13 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
 import httpx
 import structlog
@@ -51,6 +52,40 @@ DEFAULT_VERSION = "2.0"
 
 #: Shortest wait between polls of a pending job, whatever ``Retry-After`` says.
 MIN_POLL_DELAY = 0.25
+
+# There is deliberately no alpha-submission method in endpoints.py. BrainClient.request,
+# however, accepts an unconstrained method and path, and poll() documents the submission
+# verb flip. These local blocks make that omission an enforceable boundary. OPTIONS is not
+# generally guarded because the settings and alpha-filter schema readers depend on it.
+GUARDED_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+BLOCKED_PATHS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^alphas/[^/]+/submit$"),
+    re.compile(r"^alphas$"),
+    re.compile(r"^users/[^/]+/alphas$"),
+)
+
+
+def _normalise_path(path: str) -> str:
+    """Return a case-folded, decoded path with dot segments removed."""
+    parsed = urlsplit(path)
+    raw_path = parsed.path if parsed.scheme or parsed.netloc else path.split("?", 1)[0]
+    raw_path = raw_path.split("#", 1)[0]
+
+    # Measured with httpx 0.28.1: dot segments leave as their resolved path, absolute
+    # URLs bypass base_url, and percent escapes remain encoded. Decode twice so a server
+    # cannot turn a double-encoded spelling into a route that escaped this guard.
+    decoded = unquote(unquote(raw_path))
+    parts: list[str] = []
+    for part in decoded.split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    return "/".join(parts).casefold()
+
 
 #: A reset this large is a wall-clock instant, not a countdown.
 EPOCH_SECONDS = 1e9
@@ -133,6 +168,12 @@ def _parse_retry_after(headers: httpx.Headers) -> float | None:
     if not math.isfinite(seconds):
         return 0.0
     return max(seconds, 0.0)
+
+
+class BrainRequestBlocked(BrainError):  # noqa: N818
+    """Refused locally before the request was sent. Never reaches the network."""
+
+    retryable = False
 
 
 class BrainClient:
@@ -257,6 +298,42 @@ class BrainClient:
             # left to the Retry-After gate, which is safer than obeying a nonsense number.
             self._gap[bucket] = 0.0
 
+    def _guard(self, method: Method, path: str) -> None:
+        parsed = urlsplit(path)
+        if parsed.scheme or parsed.netloc:
+            base = urlsplit(self.base_url)
+            try:
+                target_scheme = (parsed.scheme or base.scheme).casefold()
+                target_port = parsed.port or {"http": 80, "https": 443}.get(target_scheme)
+                base_scheme = base.scheme.casefold()
+                base_port = base.port or {"http": 80, "https": 443}.get(base_scheme)
+            except ValueError as exc:
+                raise BrainRequestBlocked(
+                    "alpha-harness refused to send this request: the absolute URL has an "
+                    "invalid port and cannot be verified against the configured BRAIN origin."
+                ) from exc
+
+            if (
+                target_scheme != base_scheme
+                or (parsed.hostname or "").casefold() != (base.hostname or "").casefold()
+                or target_port != base_port
+            ):
+                raise BrainRequestBlocked(
+                    "alpha-harness refused to send this request: an absolute URL outside the "
+                    "configured BRAIN origin could exfiltrate credentials supplied by "
+                    "brain/auth.py:158."
+                )
+
+        verb = method.upper()
+        normalised = _normalise_path(path)
+        submit = BLOCKED_PATHS[0].fullmatch(normalised) is not None
+        other_blocked = any(pattern.fullmatch(normalised) for pattern in BLOCKED_PATHS[1:])
+        if (submit and verb != "GET") or (verb in GUARDED_METHODS and other_blocked):
+            raise BrainRequestBlocked(
+                "alpha-harness refused to send this request: alpha submission and bulk alpha "
+                "mutation are disabled by design."
+            )
+
     async def request(
         self,
         method: Method,
@@ -273,12 +350,15 @@ class BrainClient:
     ) -> BrainResponse:
         """Issue one request and translate failures into typed exceptions.
 
+        The alpha-submit guard is applied locally before throttling or HTTP work.
         ``raw`` leaves a successful body as undecoded ``bytes``, for payloads whose caller
         has a faster decoder than the standard library's. ``read_timeout`` overrides the client's
         for one call, since a few endpoints legitimately take longer than the rest.
 
         ``params`` values that are ``None`` are dropped.
         """
+        self._guard(method, path)
+
         merged = {"Accept": f"application/json;version={version}"}
         if headers:
             merged.update(headers)

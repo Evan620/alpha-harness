@@ -345,6 +345,39 @@ PROVIDERS: dict[str, Provider] = {
             ),
         ),
     ),
+    # Local addition: the operator already holds a GLM Coding Plan subscription. The base URL
+    # must be the CODING path; a Coding Plan key on the general endpoint is rejected with
+    # "1113 Insufficient balance". Both models reason before answering (~75 tokens), so never
+    # send a small max_tokens or the content comes back empty with no error.
+    "zai": Provider(
+        id="zai",
+        label="Z.AI (GLM)",
+        base_url="https://api.z.ai/api/coding/paas/v4",
+        onboarding_url="https://z.ai/manage-apikey/apikey-list",
+        key_hint="32 characters, a dot, then 16",
+        tier_note="Your GLM Coding Plan subscription. Limits below are the plan's.",
+        paid=True,
+        models=(
+            _model(
+                "glm-5.3",
+                "GLM-5.3",
+                "zai",
+                rpm=20,
+                rpd=2_000,
+                summary="Strong reasoning model, 1M context. The better answer of the two.",
+                recommended=True,
+            ),
+            _model(
+                "glm-5.3-flash",
+                "GLM-5.3 Flash",
+                "zai",
+                rpm=30,
+                rpd=5_000,
+                summary="Faster and cheaper on the same plan. For bulk work.",
+                bulk=True,
+            ),
+        ),
+    ),
 }
 
 DEFAULT_PROVIDER = "google"
