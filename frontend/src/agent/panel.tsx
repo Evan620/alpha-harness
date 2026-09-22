@@ -52,6 +52,12 @@ type Entry =
   | { role: 'agent'; parts: Part[]; live: boolean }
   | { role: 'permissions' }
 
+const COMMANDS = [
+  { name: '/permissions', hint: 'Ask first or Auto: whether Vision asks before acting' },
+  { name: '/new', hint: 'Start a new conversation' },
+  { name: '/clear', hint: 'Clear this conversation' },
+] as const
+
 const STARTERS = [
   'What is this page for?',
   'Give me a two-minute tour of the platform.',
@@ -121,6 +127,7 @@ export function AgentPanel() {
   const toggle = useVision((s) => s.toggle)
   const [entries, setEntries] = useState<Entry[]>([])
   const [text, setText] = useState('')
+  const [pick, setPick] = useState(0)
   const [busy, setBusy] = useState(false)
   const [threadId, setThreadId] = useState<number | null>(null)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -261,6 +268,11 @@ export function AgentPanel() {
     )
   }
 
+  // Slash commands: the menu opens on "/" and filters as you type.
+  const slash = /^\/\S*$/.test(text) ? text.toLowerCase() : null
+  const menu = slash ? COMMANDS.filter((c) => c.name.startsWith(slash)) : []
+  const pickIndex = Math.min(pick, Math.max(menu.length - 1, 0))
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
     send(text)
@@ -388,11 +400,64 @@ export function AgentPanel() {
         )}
       </div>
 
-      <form onSubmit={onSubmit} className="flex items-end gap-2 border-t border-hairline p-3">
+      <form
+        onSubmit={onSubmit}
+        className="relative flex items-end gap-2 border-t border-hairline p-3"
+      >
+        {menu.length > 0 && (
+          <div
+            role="listbox"
+            aria-label="Commands"
+            className="absolute right-3 bottom-full left-3 mb-1 overflow-hidden rounded-sm border border-hairline-strong bg-surface-2 shadow-lg"
+          >
+            {menu.map((c, i) => (
+              <button
+                key={c.name}
+                type="button"
+                role="option"
+                aria-selected={i === pickIndex}
+                onMouseEnter={() => setPick(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  send(c.name)
+                }}
+                className={cn(
+                  'flex w-full items-baseline gap-3 px-3 py-1.5 text-left',
+                  i === pickIndex ? 'bg-surface-3' : 'hover:bg-surface-3',
+                )}
+              >
+                <span className="font-mono text-body-compact text-ink">{c.name}</span>
+                <span className="truncate text-body-compact text-ink-subtle">{c.hint}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <Textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            setPick(0)
+          }}
           onKeyDown={(e) => {
+            if (menu.length > 0) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault()
+                const step = e.key === 'ArrowDown' ? 1 : -1
+                setPick((p) => (p + step + menu.length) % menu.length)
+                return
+              }
+              if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                e.preventDefault()
+                const chosen = menu[pickIndex]
+                if (chosen) send(chosen.name)
+                return
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setText('')
+                return
+              }
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
               send(text)
