@@ -34,6 +34,8 @@ class Session(Out):
     expires_at: float | None
     restored_from_cache: bool
     verification_url: str | None
+    #: The Persona inquiry a paused sign-in is waiting on, which `/verify` closes.
+    inquiry: str | None
     detail: str | None
     can_multi_simulate: bool
     is_consultant: bool
@@ -82,6 +84,37 @@ async def login(payload: LoginRequest, state: State) -> Session:
         except Exception:
             log.warning("auth.metadata_refresh_failed", exc_info=True)
 
+    await state.hub.broadcast(TOPIC_SESSION, info.to_dict())
+    return Session.model_validate(info.to_dict())
+
+
+class VerifyRequest(BaseModel):
+    """The Persona inquiry a sign-in was refused with."""
+
+    inquiry: str = Field(description="The inquiry id from the 409 that asked for a check")
+
+
+@router.post("/verify")
+async def verify(payload: VerifyRequest, state: State) -> Session:
+    """Finish a sign-in that BRAIN paused for an identity check.
+
+    The check itself happens on BRAIN's own page, which cannot be embedded here — it
+    answers ``X-Frame-Options: DENY``, and the Persona widget behind it only frames into
+    WorldQuant's own domain. So the browser opens that page in a window of its own and
+    asks here whether it has been accepted yet.
+
+    Answering while the check is still open is normal, not an error: the session comes
+    back unauthenticated and still carrying the inquiry, and the caller asks again. That
+    is what lets the window and this poll finish in either order.
+    """
+    info = await state.auth.verify(payload.inquiry)
+    if info.authenticated:
+        # Everything a fresh sign-in settles, because this *is* the sign-in completing.
+        state.engine.configure_from_permissions(info.permissions)
+        try:
+            await state.metadata.refresh_metadata()
+        except Exception:
+            log.warning("auth.metadata_refresh_failed", exc_info=True)
     await state.hub.broadcast(TOPIC_SESSION, info.to_dict())
     return Session.model_validate(info.to_dict())
 

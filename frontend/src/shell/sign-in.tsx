@@ -3,11 +3,15 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { type FormEvent, useState } from 'react'
+import { ShieldCheckIcon } from 'lucide-react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { auth } from '@/api/core'
 import { ApiError } from '@/api/http'
 import { useLive } from '@/lib/live'
-import { Button, ErrorNotice, Field, Input } from '@/ui/kit'
+import { Button, ErrorNotice, Field, Input, Notice } from '@/ui/kit'
+
+/** How often the app asks BRAIN whether the identity check has been accepted. */
+const VERIFY_EVERY_MS = 2_500
 
 /** Larger than the in-app controls: this screen is the whole page and is read from arm's length. */
 const FIELD = '[&>span:first-child]:text-body'
@@ -40,6 +44,7 @@ export function SignIn({ storedEmail }: { storedEmail: string | null }) {
           code: session.verificationUrl ? 'verification_required' : 'not_authenticated',
           message: session.detail || 'That email and password were not accepted.',
           ...(session.verificationUrl ? { verificationUrl: session.verificationUrl } : {}),
+          ...(session.inquiry ? { inquiry: session.inquiry } : {}),
         })
       }
       return session
@@ -51,9 +56,18 @@ export function SignIn({ storedEmail }: { storedEmail: string | null }) {
     },
   })
 
-  const needsVerification =
-    signIn.error instanceof ApiError && Boolean(signIn.error.body.verificationUrl)
+  const failed = signIn.error instanceof ApiError ? signIn.error : null
+  const verificationUrl =
+    typeof failed?.body.verificationUrl === 'string' ? failed.body.verificationUrl : null
+  const inquiry = typeof failed?.body['inquiry'] === 'string' ? failed.body['inquiry'] : null
   const missing = signIn.error instanceof FieldError ? signIn.error : null
+
+  const done = () => {
+    setPassword('')
+    useLive.setState({ verificationUrl: null })
+    signIn.reset()
+    void queryClient.invalidateQueries()
+  }
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center p-6">
@@ -138,11 +152,11 @@ export function SignIn({ storedEmail }: { storedEmail: string | null }) {
             </div>
           </Field>
 
-          {signIn.isError && !missing && (
-            <ErrorNotice
-              error={signIn.error}
-              title={needsVerification ? 'BRAIN needs to verify your identity' : 'Sign-in failed'}
-            />
+          {verificationUrl && inquiry ? (
+            <Verification url={verificationUrl} inquiry={inquiry} onVerified={done} />
+          ) : (
+            signIn.isError &&
+            !missing && <ErrorNotice error={signIn.error} title="Sign-in failed" />
           )}
 
           <Button
@@ -156,5 +170,95 @@ export function SignIn({ storedEmail }: { storedEmail: string | null }) {
         </form>
       </div>
     </div>
+  )
+}
+
+/** BRAIN's identity check, waited on rather than handed over as a link.
+ *
+ * The check itself cannot live in this page: BRAIN answers `X-Frame-Options: DENY`, and the
+ * Persona widget behind it frames only into WorldQuant's own domain. So it opens in a window
+ * of its own, and this asks BRAIN every couple of seconds whether it has been accepted —
+ * which is what lets the sign-in finish by itself rather than asking for the password again.
+ */
+function Verification({
+  url,
+  inquiry,
+  onVerified,
+}: {
+  url: string
+  inquiry: string
+  onVerified: () => void
+}) {
+  const [waiting, setWaiting] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const popup = useRef<Window | null>(null)
+
+  useEffect(() => {
+    if (!waiting) return
+    let stopped = false
+    const timer = setInterval(async () => {
+      try {
+        const session = await auth.verify(inquiry)
+        if (stopped) return
+        if (session.authenticated) {
+          stopped = true
+          clearInterval(timer)
+          popup.current?.close()
+          onVerified()
+        }
+      } catch (error) {
+        // Asking early is normal and answers unauthenticated; a real failure stops the wait
+        // rather than polling BRAIN forever.
+        stopped = true
+        clearInterval(timer)
+        setWaiting(false)
+        setProblem(error instanceof ApiError ? error.message : 'The check could not be read.')
+      }
+    }, VERIFY_EVERY_MS)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }, [waiting, inquiry, onVerified])
+
+  const open = () => {
+    setProblem(null)
+    setWaiting(true)
+    // Named, so a second click returns to the window already open rather than making another.
+    popup.current = window.open(url, 'brain-identity-check', 'width=520,height=760')
+    if (!popup.current) {
+      setWaiting(false)
+      setProblem(
+        'Your browser blocked the window. Allow pop-ups for this page, or open the check in a new tab.',
+      )
+    }
+  }
+
+  return (
+    <Notice tone="warn" title="BRAIN needs to verify your identity">
+      <div className="flex flex-col gap-3">
+        <p>
+          {waiting
+            ? 'Finish the check in the window that opened. This page signs you in as soon as BRAIN accepts it — leave it open.'
+            : 'This happens once. The check opens in its own window; you will not need to type your password again.'}
+        </p>
+        {problem && <p className="text-status-warning">{problem}</p>}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="primary" onClick={open} loading={waiting}>
+            <ShieldCheckIcon />
+            {waiting ? 'Waiting for BRAIN…' : 'Verify identity'}
+          </Button>
+          {waiting && (
+            <button
+              type="button"
+              className="text-body text-ink-subtle underline-offset-2 hover:underline"
+              onClick={() => setWaiting(false)}
+            >
+              Stop waiting
+            </button>
+          )}
+        </div>
+      </div>
+    </Notice>
   )
 }

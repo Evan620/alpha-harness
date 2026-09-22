@@ -233,6 +233,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify
+         * @description Finish a sign-in that BRAIN paused for an identity check.
+         *
+         *     The check itself happens on BRAIN's own page, which cannot be embedded here — it
+         *     answers ``X-Frame-Options: DENY``, and the Persona widget behind it only frames into
+         *     WorldQuant's own domain. So the browser opens that page in a window of its own and
+         *     asks here whether it has been accepted yet.
+         *
+         *     Answering while the check is still open is normal, not an error: the session comes
+         *     back unauthenticated and still carrying the inquiry, and the caller asks again. That
+         *     is what lets the window and this poll finish in either order.
+         */
+        post: operations["verify_api_auth_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/catalog/counts": {
         parameters: {
             query?: never;
@@ -4000,6 +4029,8 @@ export interface components {
             expiresInSeconds: number | null;
             /** Fullname */
             fullName: string | null;
+            /** Inquiry */
+            inquiry: string | null;
             /** Isconsultant */
             isConsultant: boolean;
             /** Permissions */
@@ -4743,6 +4774,17 @@ export interface components {
             /** Universe */
             universe: string | null;
         };
+        /**
+         * VerifyRequest
+         * @description The Persona inquiry a sign-in was refused with.
+         */
+        VerifyRequest: {
+            /**
+             * Inquiry
+             * @description The inquiry id from the 409 that asked for a check
+             */
+            inquiry: string;
+        };
         /** Windows */
         Windows: {
             inSample: components["schemas"]["PortfolioStats"] | null;
@@ -5095,6 +5137,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsOptions"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_api_auth_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             /** @description Validation Error */

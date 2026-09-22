@@ -40,6 +40,9 @@ export const auth = {
       email: email || null,
       password: password || null,
     }),
+  /** Close a paused sign-in's identity check. Answering early is normal: the session comes
+   *  back unauthenticated and still carrying the inquiry. */
+  verify: (inquiry: string) => http.post<Session>('/api/auth/verify', { inquiry }),
   logout: () => http.post<Session>('/api/auth/logout'),
   /** Legal values for every settings field, given what is chosen. Keys use BRAIN's names. */
   settingsOptions: (settings: Record<string, unknown>) =>
