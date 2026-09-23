@@ -4,9 +4,10 @@
 score, so it stops optimising the number a research screen happens to show (Sharpe) and
 starts optimising the ones a consultant is paid on.
 
-Every rule here was paid for with simulations on this account. Where a rule contradicts a
-plausible intuition, the intuition is named too, because the intuition is what the model
-will otherwise reach for.
+These are rules about the platform, not about any one account: every live number is read
+from an endpoint at the time it is needed, so this text stays true for whoever is using it.
+Where a rule contradicts a plausible intuition, the intuition is named too, because the
+intuition is what the model will otherwise reach for.
 """
 
 from __future__ import annotations
@@ -33,9 +34,10 @@ whether an Alpha is submittable at all; after that it stops paying.
   group by 1, 2 order by 3 desc`. Use the pyramid grid for multipliers and for which cells
   are lit, not for scope depth.
 - Pyramid multipliers differ by Region x Delay x Category and are read from
-  GET /api/catalog/pyramids. USA/D1 is the worst-paying scope on the board; the same work
-  at the same quality bar pays far more elsewhere. Check the multiplier BEFORE choosing
-  where to spend simulations.
+  GET /api/catalog/pyramids, and they change each quarter. The spread across the grid is
+  wide, and the crowded delay-1 majors are usually at the bottom of it, so the same work at
+  the same quality bar can pay far more one cell over. Read the grid and say the actual
+  multiplier BEFORE choosing where to spend simulations; never assume which cell is best.
 - A pyramid counts as formulated at 3 submitted Alphas in it (GET /api/quarter).
 Read GET /api/quarter/consultant for the live scoreboard: valueFactor, dailyOsmosisRank,
 meanProdCorrelation, meanSelfCorrelation, dataFieldsUsed. Quote those numbers, never guess

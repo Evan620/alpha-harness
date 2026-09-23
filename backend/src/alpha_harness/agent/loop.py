@@ -460,12 +460,12 @@ class AgentService:
         self, thread: Thread, context: dict[str, Any], *, tools: bool = True
     ) -> AsyncIterator[tuple[str, Any]]:
         """Stream one completion: yields ("text"|"thinking", delta), then ("message", msg)."""
-        info = self.state.llm.model_for(MODEL)
+        info = await self.state.llm.resolve(MODEL, deep=True)
         key_id = await self.state.llm.keys.choose(info)
         secret = await self.state.llm.keys.secret(key_id)
         spec = provider_spec(info.provider)
         payload = {
-            "model": MODEL,
+            "model": info.id,
             "messages": [{"role": "system", "content": _system(context)}, *thread.messages],
             "temperature": 0.2,
             "max_tokens": 4_096,
@@ -489,7 +489,7 @@ class AgentService:
                 await asyncio.sleep(wait)
         content, calls, tokens = state["content"], state["calls"], state["tokens"]
         try:
-            await self.state.llm.ledger.record(key_id, MODEL, tokens)
+            await self.state.llm.ledger.record(key_id, info.id, tokens)
         except Exception:
             log.warning("agent.ledger_failed", exc_info=True)
         message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}

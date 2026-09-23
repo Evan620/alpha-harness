@@ -19,8 +19,8 @@ import structlog
 
 from .budget import Ledger
 from .context import ContextBuilder, estimate_tokens
-from .keys import BudgetExhaustedError, KeyStore, LLMError
-from .registry import DEFAULT_MODEL, ModelInfo, ModelRegistry
+from .keys import BudgetExhaustedError, KeyStore, LLMError, NoKeysError
+from .registry import DEEP_MODEL, DEFAULT_MODEL, ModelInfo, ModelRegistry
 
 if TYPE_CHECKING:
     from ..catalog.queries import CatalogQueries
@@ -175,6 +175,38 @@ class LLMService:
     def model_for(self, model_id: str | None) -> ModelInfo:
         return self.registry.require(model_id or DEFAULT_MODEL)
 
+    async def resolve(self, model_id: str | None = None, *, deep: bool = False) -> ModelInfo:
+        """A model this installation can actually reach, preferring the one asked for.
+
+        :meth:`model_for` answers from the roster alone, which is wrong the moment the
+        roster and the Keys disagree: the default is whatever this build was tuned for, and
+        someone else's copy holds a Key for a different provider entirely. Falling back
+        keeps the assistant working on their Keys instead of failing on ours.
+        """
+        keyed = {row.provider for row in await self.keys.list_keys() if row.enabled}
+        if not keyed:
+            raise NoKeysError()
+
+        wanted = [model_id] if model_id else []
+        wanted += [DEEP_MODEL, DEFAULT_MODEL] if deep else [DEFAULT_MODEL, DEEP_MODEL]
+        for candidate in wanted:
+            if not candidate:
+                continue
+            info = self.registry.get(candidate)
+            if info is not None and info.provider in keyed:
+                return info
+
+        # Nothing preferred is reachable: take the best text model the Keys do cover,
+        # recommended first, then the largest daily budget.
+        usable = [m for m in self.registry.all("text") if m.provider in keyed]
+        if not usable:
+            raise NoKeysError()
+        usable.sort(key=lambda m: (not m.recommended, -m.rpd, m.id))
+        chosen = usable[0]
+        if model_id or DEFAULT_MODEL not in {m.id for m in usable}:
+            log.info("llm.model_fallback", asked=model_id or DEFAULT_MODEL, using=chosen.id)
+        return chosen
+
     # -- the one call ----------------------------------------------------
 
     async def generate(
@@ -194,7 +226,7 @@ class LLMService:
         """
         from google.genai import types
 
-        model = self.model_for(model_id)
+        model = await self.resolve(model_id)
         estimate = estimate_tokens(system) + estimate_tokens(user)
         if estimate > model.tpm:
             # No wait fits a request bigger than the whole per-minute budget: say so, rather
