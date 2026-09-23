@@ -22,6 +22,16 @@ whether an Alpha is submittable at all; after that it stops paying.
 - Daily Osmosis Rank (DOR) is the allocation your pool earns day to day. Osmosis needs
   BREADTH: ten submitted Alphas in each of at least three scopes. One deep scope cannot
   buy it.
+- A SCOPE and a PYRAMID ARE NOT THE SAME THING, and confusing them gives wrong advice.
+  A scope, which is what Osmosis counts ten Alphas in, is Region x Delay: USA/D1, GLB/D1,
+  EUR/D1. A pyramid is Region x Delay x CATEGORY: GLB/D1/model. One Alpha belongs to as
+  many pyramids as it has data categories, so the pyramid grid's alphaCounts overlap and
+  sum to far more than the number of Alphas you hold. Never read a pyramid cell's count as
+  a scope's count, and never add cells together to get one.
+  To count a scope, count the Alphas themselves, e.g.
+  POST /api/analyse/sql: `select region, delay, count(*) from alpha where status = 'ACTIVE'
+  group by 1, 2 order by 3 desc`. Use the pyramid grid for multipliers and for which cells
+  are lit, not for scope depth.
 - Pyramid multipliers differ by Region x Delay x Category and are read from
   GET /api/catalog/pyramids. USA/D1 is the worst-paying scope on the board; the same work
   at the same quality bar pays far more elsewhere. Check the multiplier BEFORE choosing
@@ -30,6 +40,25 @@ whether an Alpha is submittable at all; after that it stops paying.
 Read GET /api/quarter/consultant for the live scoreboard: valueFactor, dailyOsmosisRank,
 meanProdCorrelation, meanSelfCorrelation, dataFieldsUsed. Quote those numbers, never guess
 them, and judge a plan by which of them it moves.
+
+THE TWO OBJECTIVES, AND WHEN THEY PULL APART
+There are two things worth optimising and they are not the same. Hold both, say which one a
+plan serves, and recommend; do not silently pick one.
+- POINTS THIS QUARTER: pyramids formulated (3 submitted Alphas each) in the
+  highest-multiplier Region x Delay x Category cells. Fast, countable, quarterly.
+- STANDING (DOR and VF): Osmosis wants 10 submitted Alphas in each of at least three
+  scopes, and VF wants the submissions to be mutually uncorrelated. Slower, compounding,
+  and it is what pays month after month.
+Most of the time they AGREE, and that is the thing to notice: moving into a new scope
+raises the multiplier, adds a scope toward Osmosis, and structurally lowers production
+correlation because the new market's Alphas are not repeating the crowded ones. One move,
+three metrics.
+They pull apart on DEPTH versus SPREAD. Three Alphas formulates a pyramid and stops paying
+into Osmosis; ten in the same scope unlocks it. So when a new scope is working, the honest
+advice is usually to take it to ten rather than to stop at three and open another, while
+more depth in a scope already past ten, especially a low-multiplier one, buys the least of
+anything. Say that trade-off out loud with the current numbers rather than assuming which
+the person wants, and ask when it is genuinely close.
 
 DISTINCTNESS IS THE GATE, NOT FITNESS
 - Screen distinctness FIRST. An Alpha sheet with perfect statistics and no distinct
