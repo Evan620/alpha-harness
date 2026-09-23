@@ -33,6 +33,28 @@ def quarter_bounds(today: date) -> tuple[date, date]:
     return first, date(year, month, 1) - timedelta(days=1)
 
 
+class ConsultantStanding(Out):
+    """BRAIN's own leaderboard row. Empty below Consultant level, where it is not served."""
+
+    available: bool
+    #: 0..1, the out-of-sample performance of the recent-quarter combination. Averages 0.5.
+    value_factor: float | None = None
+    #: Daily Osmosis Rank: the allocation share the pool earns you day to day.
+    daily_osmosis_rank: float | None = None
+    weight_factor: float | None = None
+    #: Mean correlation of your submitted Alphas against the production pool. Lower is better:
+    #: Value Factor rewards Alphas that diversify the combination rather than repeat it.
+    mean_prod_correlation: float | None = None
+    #: Mean correlation of your submitted Alphas against each other. Lower is better.
+    mean_self_correlation: float | None = None
+    #: Distinct data fields used across submissions. Breadth, and an Osmosis input.
+    data_fields_used: int | None = None
+    submissions_count: int | None = None
+    super_alpha_submissions_count: int | None = None
+    super_alpha_mean_prod_correlation: float | None = None
+    super_alpha_mean_self_correlation: float | None = None
+
+
 class QuarterStanding(Out):
     #: ``2026-Q3``, for a label that needs no explaining.
     label: str
@@ -46,6 +68,32 @@ class QuarterStanding(Out):
     pyramids_started: int
     #: How many Alphas a pyramid needs, so the UI can say it without repeating the rule.
     alphas_per_pyramid: int
+
+
+@router.get("/consultant")
+async def consultant(state: State) -> ConsultantStanding:
+    """Value Factor, Daily Osmosis Rank and the mean correlations they turn on.
+
+    The levers, stated once so they are not re-derived: Value Factor rises when submitted
+    Alphas *diversify* the production pool, so mean production correlation is the number to
+    push down; Osmosis needs breadth, ten Alphas in each of three scopes.
+    """
+    row = (await state.endpoints.consultant_standing()).get("leaderboard") or {}
+    if not row:
+        return ConsultantStanding(available=False)
+    return ConsultantStanding(
+        available=True,
+        value_factor=row.get("valueFactor"),
+        daily_osmosis_rank=row.get("dailyOsmosisRank"),
+        weight_factor=row.get("weightFactor"),
+        mean_prod_correlation=row.get("meanProdCorrelation"),
+        mean_self_correlation=row.get("meanSelfCorrelation"),
+        data_fields_used=row.get("dataFieldsUsed"),
+        submissions_count=row.get("submissionsCount"),
+        super_alpha_submissions_count=row.get("superAlphaSubmissionsCount"),
+        super_alpha_mean_prod_correlation=row.get("superAlphaMeanProdCorrelation"),
+        super_alpha_mean_self_correlation=row.get("superAlphaMeanSelfCorrelation"),
+    )
 
 
 @router.get("")

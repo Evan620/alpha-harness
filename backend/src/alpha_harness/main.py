@@ -29,6 +29,7 @@ from . import updates
 from .api import (
     agent,
     alphas,
+    analyse,
     auth,
     catalog,
     chat,
@@ -175,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(power_pool_lab.router)
     app.include_router(chat.router)
     app.include_router(agent.router)
+    app.include_router(analyse.router)
     app.include_router(update.router)
     app.include_router(ws.router)
 

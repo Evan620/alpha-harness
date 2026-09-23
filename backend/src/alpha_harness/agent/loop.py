@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from ..llm.providers import get as provider_spec
 from ..llm.registry import DEEP_MODEL
 from . import actions, guide
+from .doctrine import DOCTRINE
 from .approval import ApprovalError, ApprovalGate
 from .permissions import Permissions
 from .registry import AgentContext, UnknownCapability
@@ -162,6 +163,7 @@ HOW TO WRITE (rendered as Markdown)
 - End with at most one concrete next step, phrased as an offer.
 - No em-dashes. No filler like "Great question".
 
+{DOCTRINE}
 THE PLATFORM (every page)
 {guide.site_map()}
 

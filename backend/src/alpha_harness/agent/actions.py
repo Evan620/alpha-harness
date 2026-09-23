@@ -36,7 +36,7 @@ RESULT_CHARS = 6_000
 READ_ONLY_POSTS = re.compile(
     r"(/preview$|^/api/alphas/search$|^/api/catalog/(fields|facets|coverage-matrix)$"
     r"|^/api/auth/settings-options$|^/api/vault/alphas/(query|k-ratio)$"
-    r"|^/api/vault/mix/(candidates|correlations)$|^/api/harvest/fields$)"
+    r"|^/api/vault/mix/(candidates|correlations)$|^/api/harvest/fields$|^/api/analyse/sql$)"
 )
 #: Previews that still spend something are not read-only.
 SPENDING_PREVIEWS = re.compile(r"^/api/power-pool-lab/preview$")

@@ -145,6 +145,21 @@ class BrainEndpoints:
         except BrainError:
             return {}
 
+    async def consultant_standing(self) -> dict[str, Any]:
+        """The consultant leaderboard row: Value Factor, Daily Osmosis Rank, mean correlations.
+
+        This is the scoreboard a consultant is actually paid on, and nothing else in the app
+        reads it. ``/users/self/consultant`` answers 404 below Consultant level, which is a
+        fact about the account rather than a failure, so it degrades to an empty mapping.
+        """
+        try:
+            r = await self.client.request("GET", "/users/self/consultant", raise_for_status=False)
+            if r.status >= 400 or not isinstance(r.body, dict):
+                return {}
+            return r.body
+        except BrainError:
+            return {}
+
     # -- platform metadata ----------------------------------------------
 
     async def settings_schema(self) -> dict[str, Any]:
