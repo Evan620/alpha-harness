@@ -21,6 +21,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/goal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Goal */
+        get: operations["get_goal_api_agent_goal_get"];
+        /**
+         * Set Goal
+         * @description Set the standing objective. The person's to set; Vision has no action for it.
+         */
+        put: operations["set_goal_api_agent_goal_put"];
+        post?: never;
+        /** Clear Goal */
+        delete: operations["clear_goal_api_agent_goal_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/permissions": {
         parameters: {
             query?: never;
@@ -251,6 +273,48 @@ export interface paths {
         get: operations["performance_api_alphas__alpha_id__performance_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analyse/schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Schema
+         * @description Every table and column in one store, so a query can be written without guessing.
+         */
+        get: operations["schema_api_analyse_schema_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analyse/sql": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Sql
+         * @description Run one read-only statement against the local store and return its rows.
+         *
+         *     Spends nothing: no BRAIN call, no simulation, no LLM budget.
+         */
+        post: operations["run_sql_api_analyse_sql_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -830,6 +894,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search
+         * @description Recent notes, newest first. Search before proposing a sweep.
+         */
+        get: operations["search_api_journal_get"];
+        put?: never;
+        /**
+         * Write
+         * @description Record one thing learned. Local only, spends nothing.
+         */
+        post: operations["write_api_journal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/journal/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove
+         * @description Delete a note that turned out to be wrong. A wrong memory is worse than none.
+         */
+        delete: operations["remove_api_journal__note_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/lab-tasks": {
         parameters: {
             query?: never;
@@ -1305,6 +1413,30 @@ export interface paths {
          *     number of Alphas and cannot stand in for it.
          */
         get: operations["standing_api_quarter_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/quarter/consultant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Consultant
+         * @description Value Factor, Daily Osmosis Rank and the mean correlations they turn on.
+         *
+         *     The levers, stated once so they are not re-derived: Value Factor rises when submitted
+         *     Alphas *diversify* the production pool, so mean production correlation is the number to
+         *     push down; Osmosis needs breadth, ten Alphas in each of three scopes.
+         */
+        get: operations["consultant_api_quarter_consultant_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2643,6 +2775,34 @@ export interface components {
             /** Updatedat */
             updatedAt: string | null;
         };
+        /**
+         * ConsultantStanding
+         * @description BRAIN's own leaderboard row. Empty below Consultant level, where it is not served.
+         */
+        ConsultantStanding: {
+            /** Available */
+            available: boolean;
+            /** Dailyosmosisrank */
+            dailyOsmosisRank?: number | null;
+            /** Datafieldsused */
+            dataFieldsUsed?: number | null;
+            /** Meanprodcorrelation */
+            meanProdCorrelation?: number | null;
+            /** Meanselfcorrelation */
+            meanSelfCorrelation?: number | null;
+            /** Submissionscount */
+            submissionsCount?: number | null;
+            /** Superalphameanprodcorrelation */
+            superAlphaMeanProdCorrelation?: number | null;
+            /** Superalphameanselfcorrelation */
+            superAlphaMeanSelfCorrelation?: number | null;
+            /** Superalphasubmissionscount */
+            superAlphaSubmissionsCount?: number | null;
+            /** Valuefactor */
+            valueFactor?: number | null;
+            /** Weightfactor */
+            weightFactor?: number | null;
+        };
         /** ContextCounts */
         ContextCounts: {
             /** Categories */
@@ -3027,6 +3187,29 @@ export interface components {
             results: components["schemas"]["DataFieldRow"][];
             /** Total */
             total: number;
+        };
+        /**
+         * GoalRequest
+         * @description What to pursue, and the most it may cost. 0 on a budget means no ceiling.
+         */
+        GoalRequest: {
+            /**
+             * Brain Simulations
+             * @default 0
+             */
+            brain_simulations: number;
+            /**
+             * Correlation Jobs
+             * @default 0
+             */
+            correlation_jobs: number;
+            /**
+             * Llm Requests
+             * @default 0
+             */
+            llm_requests: number;
+            /** Objective */
+            objective: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3436,6 +3619,60 @@ export interface components {
             chat: string;
             /** Deep */
             deep: string;
+        };
+        /** Note */
+        Note: {
+            /** Author */
+            author: string;
+            /** Body */
+            body: string;
+            /** Createdat */
+            createdAt: string;
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Scope */
+            scope: string;
+            /** Subject */
+            subject: string;
+            /** Tags */
+            tags: string[];
+        };
+        /** NoteRequest */
+        NoteRequest: {
+            /**
+             * Author
+             * @default vision
+             * @enum {string}
+             */
+            author: "vision" | "human";
+            /**
+             * Body
+             * @description What was learned, plainly
+             */
+            body: string;
+            /**
+             * Kind
+             * @description finding | dead_end | decision | idea
+             * @default finding
+             * @enum {string}
+             */
+            kind: "finding" | "dead_end" | "decision" | "idea";
+            /**
+             * Scope
+             * @description e.g. USA/1/TOP3000
+             * @default
+             */
+            scope: string;
+            /**
+             * Subject
+             * @description Dataset, alpha, family or scope
+             * @default
+             */
+            subject: string;
+            /** Tags */
+            tags?: string[];
         };
         /** OperatorsRead */
         OperatorsRead: {
@@ -4392,6 +4629,41 @@ export interface components {
             /** Universe */
             universe: string | null;
         };
+        /** SqlRequest */
+        SqlRequest: {
+            /**
+             * Limit
+             * @default 200
+             */
+            limit: number;
+            /**
+             * Source
+             * @description catalog = data fields, datasets, Alpha vault (DuckDB); history = simulations, studies, trials (SQLite)
+             * @default catalog
+             * @enum {string}
+             */
+            source: "catalog" | "history";
+            /**
+             * Sql
+             * @description One read-only statement
+             */
+            sql: string;
+        };
+        /** SqlResult */
+        SqlResult: {
+            /** Columns */
+            columns: string[];
+            /** Rowcount */
+            rowCount: number;
+            /** Rows */
+            rows: {
+                [key: string]: unknown;
+            }[];
+            /** Source */
+            source: string;
+            /** Truncated */
+            truncated: boolean;
+        };
         /**
          * StudyStatus
          * @enum {string}
@@ -5056,6 +5328,85 @@ export interface operations {
             };
         };
     };
+    get_goal_api_agent_goal_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    set_goal_api_agent_goal_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_goal_api_agent_goal_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     get_permissions_api_agent_permissions_get: {
         parameters: {
             query?: never;
@@ -5416,6 +5767,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrainPayload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    schema_api_analyse_schema_get: {
+        parameters: {
+            query?: {
+                source?: "catalog" | "history";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_sql_api_analyse_sql_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SqlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SqlResult"];
                 };
             };
             /** @description Validation Error */
@@ -6282,6 +6699,103 @@ export interface operations {
             };
         };
     };
+    search_api_journal_get: {
+        parameters: {
+            query?: {
+                /** @description Matches body, subject or scope */
+                q?: string;
+                kind?: ("finding" | "dead_end" | "decision" | "idea") | null;
+                subject?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Note"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    write_api_journal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Note"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_api_journal__note_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                note_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_tasks_api_lab_tasks_get: {
         parameters: {
             query?: never;
@@ -6973,6 +7487,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QuarterStanding"];
+                };
+            };
+        };
+    };
+    consultant_api_quarter_consultant_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsultantStanding"];
                 };
             };
         };

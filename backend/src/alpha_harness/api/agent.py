@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..agent.goals import Goal
 from ..agent.loop import AgentService
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -79,6 +80,41 @@ async def decide(proposal_id: str, payload: DecisionRequest, request: Request) -
             proposal_id, payload.payload_hash, payload.approve, _context(payload.context)
         )
     )
+
+
+class GoalRequest(BaseModel):
+    """What to pursue, and the most it may cost. 0 on a budget means no ceiling."""
+
+    objective: str = Field(min_length=3, max_length=600)
+    brain_simulations: int = Field(default=0, ge=0, le=5_000)
+    llm_requests: int = Field(default=0, ge=0, le=5_000)
+    correlation_jobs: int = Field(default=0, ge=0, le=500)
+
+
+@router.get("/goal")
+async def get_goal(request: Request) -> dict[str, Any]:
+    goal = _service(request).goals.goal
+    return {"goal": goal.to_dict() if goal else None}
+
+
+@router.put("/goal")
+async def set_goal(payload: GoalRequest, request: Request) -> dict[str, Any]:
+    """Set the standing objective. The person's to set; Vision has no action for it."""
+    goal = _service(request).goals.set(
+        Goal(
+            objective=payload.objective.strip(),
+            brain_simulations=payload.brain_simulations,
+            llm_requests=payload.llm_requests,
+            correlation_jobs=payload.correlation_jobs,
+        )
+    )
+    return {"goal": goal.to_dict()}
+
+
+@router.delete("/goal")
+async def clear_goal(request: Request) -> dict[str, Any]:
+    _service(request).goals.clear("cleared by the person")
+    return {"goal": None}
 
 
 class PermissionsRequest(BaseModel):

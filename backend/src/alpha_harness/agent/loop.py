@@ -29,6 +29,7 @@ from ..llm.registry import DEEP_MODEL
 from . import actions, guide
 from .approval import ApprovalError, ApprovalGate
 from .doctrine import DOCTRINE
+from .goals import Goal, GoalBook
 from .permissions import Permissions
 from .registry import AgentContext, UnknownCapability
 
@@ -130,6 +131,27 @@ TOOLS: list[dict[str, Any]] = [
 BRAIN_ALPHA = "https://platform.worldquantbrain.com/alpha/"
 
 
+def _goal_rules(goal: Goal | None) -> str:
+    if goal is None:
+        return (
+            "NO GOAL IS SET. You are answering one question at a time. If the person describes"
+            " something that would take several steps and a budget, say they can set it as a"
+            " goal with /goal, which also caps what you may spend on it."
+        )
+    left = goal.remaining("brain_simulations")
+    budget = (
+        "no simulation ceiling"
+        if left is None
+        else f"{left} simulations left of {goal.brain_simulations}"
+    )
+    return (
+        f"THE GOAL (the person set it; you cannot change it): {goal.objective}\n"
+        f"Budget: {budget}. Status: {goal.status}. Work toward this goal, say how each step"
+        " serves it, and stop and report when it is met or the budget runs out. The gate"
+        " enforces the budget, so an action beyond it is refused rather than trimmed."
+    )
+
+
 def _mode_rules(mode: str) -> str:
     if mode == "auto":
         return (
@@ -164,6 +186,7 @@ HOW TO WORK
 - Answer about the page they are on first; they are looking at it.
 - To act: find_actions -> describe_action (for anything with a body) -> call_action.
 {_mode_rules(context.get("mode") or "ask")}
+{context.get("goalRules") or ""}
 - Human-only (sign-in, keys, update, quit) and blocked actions: say where they do it themselves.
 - You never submit alphas to BRAIN.
 - Use navigate when showing them a page helps. Only use numbers that came from a tool or from
@@ -209,7 +232,8 @@ class AgentService:
         self.state = state
         self.registry, self.index = actions.build(app)
         self.registry.validate()
-        self.gate = ApprovalGate(state, self.registry)
+        self.goals = GoalBook()
+        self.gate = ApprovalGate(state, self.registry, goals=self.goals)
         self.permissions = Permissions(state.settings.data_dir / "vision.json")
         self.threads: dict[int, Thread] = {}
         self._ids = itertools.count(1)
@@ -271,7 +295,11 @@ class AgentService:
         return thread
 
     async def _run(self, thread: Thread, context: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        context = {**context, "mode": self.permissions.mode}
+        context = {
+            **context,
+            "mode": self.permissions.mode,
+            "goalRules": _goal_rules(self.goals.goal),
+        }
         yield {"type": "start", "threadId": thread.id, "mode": self.permissions.mode}
         try:
             for _ in range(MAX_ROUNDS):

@@ -27,6 +27,7 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from ..config import REPO_ROOT
+from .goals import GoalBook
 from .registry import (
     _GATE_TOKEN,
     LIMITS,
@@ -120,6 +121,10 @@ class ProposalAlreadyDecided(ApprovalError):
 
 class ProposalPayloadMismatch(ApprovalError):
     status, code = 409, "proposal_payload_mismatch"
+
+
+class BudgetExceeded(ApprovalError):
+    """The active goal has no budget left for this action. Nothing ran."""
 
 
 class TooManyProposals(ApprovalError):
@@ -314,6 +319,7 @@ class ApprovalGate:
         max_pending: int = LIMITS["max_pending_proposals"],
         max_tracked: int = 256,
         execution_timeout: float = LIMITS["execution_timeout_seconds"],
+        goals: GoalBook | None = None,
     ) -> None:
         self._state = state
         self._caps = capabilities
@@ -324,6 +330,9 @@ class ApprovalGate:
         self._max_tracked = max_tracked
         self._execution_timeout = execution_timeout
         self._proposals: dict[str, ActionProposal] = {}
+        #: The active goal's ceiling. Consulted in :meth:`_execute`, the one path that runs a
+        #: capability, so a budget cannot be sidestepped by reaching a different entry point.
+        self._goals = goals or GoalBook()
 
     async def dispatch(
         self,
@@ -364,7 +373,7 @@ class ApprovalGate:
 
         params, canonical, digest = self._validate(cap, arguments)
         if cap.tier is Tier.AUTO:
-            result = await self._execute(cap, params, context)
+            result = await self._execute(cap, params, context, self._spends(cap, canonical))
             return DispatchResult(status="executed", tool=tool, tier=cap.tier, result=result)
         if cap.tier is not Tier.CONFIRM:
             raise GateBypass(f"{tool} has unsupported tier {cap.tier}.")
@@ -485,7 +494,7 @@ class ApprovalGate:
         proposal.decided_mono = time.monotonic()
 
         try:
-            result = await self._execute(cap, params, proposal.context)
+            result = await self._execute(cap, params, proposal.context, proposal.spends)
         except Exception as exc:  # noqa: BLE001 - a handler must not break the gate
             proposal.status = ProposalStatus.FAILED
             proposal.error_code = exc.code if isinstance(exc, ApprovalError) else type(exc).__name__
@@ -694,8 +703,22 @@ class ApprovalGate:
         cap: Capability,
         params: BaseModel,
         context: AgentContext,
+        spends: dict[str, int] | None = None,
     ) -> Any:
-        return await asyncio.wait_for(
+        """Run one capability, inside the active goal's budget.
+
+        Every execution passes through here, which is why the budget is checked here rather
+        than in the caller: a new entry point cannot forget to ask.
+        """
+        cost = spends if spends is not None else {}
+        refusal = self._goals.refusal(cost)
+        if refusal is not None:
+            log.warning("agent.budget_refused", capability=cap.name, cost=cost)
+            raise BudgetExceeded(refusal, spends=cost)
+        result = await asyncio.wait_for(
             cap.run(self._state, params, context, token=_GATE_TOKEN),
             timeout=self._execution_timeout,
         )
+        # Counted after the fact: a refused or failed run must not consume budget.
+        self._goals.record(cost)
+        return result

@@ -91,7 +91,21 @@ export interface Permissions {
   alwaysYours: { action: string; summary: string; tier: string }[]
 }
 
+export interface Goal {
+  objective: string
+  status: string
+  stoppedReason: string
+  createdAt: number
+  budgets: Record<string, number>
+  spent: Record<string, number>
+  remaining: Record<string, number | null>
+}
+
 export const agent = {
+  goal: () => http.get<{ goal: Goal | null }>('/api/agent/goal'),
+  setGoal: (body: { objective: string; brain_simulations: number }) =>
+    http.put<{ goal: Goal }>('/api/agent/goal', body),
+  clearGoal: () => http.del<{ goal: null }>('/api/agent/goal'),
   permissions: () => http.get<Permissions>('/api/agent/permissions'),
   setPermissions: (mode: PermissionMode) =>
     http.put<Permissions>('/api/agent/permissions', { mode }),

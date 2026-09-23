@@ -23,6 +23,7 @@ import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { NAV } from '@/shell/nav'
 import { Badge, Button, Textarea } from '@/ui/kit'
+import { GoalCard, GoalChip } from './goal'
 import { Markdown } from './markdown'
 import { ModeChip, PermissionsCard } from './permissions'
 import { useVision } from './store'
@@ -51,8 +52,10 @@ type Entry =
   | { role: 'user'; text: string }
   | { role: 'agent'; parts: Part[]; live: boolean }
   | { role: 'permissions' }
+  | { role: 'goal' }
 
 const COMMANDS = [
+  { name: '/goal', hint: 'Set what Vision works toward, and the most it may spend' },
   { name: '/permissions', hint: 'Ask first or Auto: whether Vision asks before acting' },
   { name: '/new', hint: 'Start a new conversation' },
   { name: '/clear', hint: 'Clear this conversation' },
@@ -211,6 +214,10 @@ export function AgentPanel() {
     }
   }
 
+  const showGoal = () => {
+    setEntries((prev) => [...prev.filter((e) => e.role !== 'goal'), { role: 'goal' }])
+  }
+
   const showPermissions = () => {
     setEntries((prev) => [...prev.filter((e) => e.role !== 'permissions'), { role: 'permissions' }])
   }
@@ -221,6 +228,7 @@ export function AgentPanel() {
     setText('')
     // Slash commands are handled here and never reach the model.
     if (trimmed === '/permissions') return showPermissions()
+    if (trimmed === '/goal') return showGoal()
     if (trimmed === '/new' || trimmed === '/clear') {
       setEntries([])
       setThreadId(null)
@@ -303,6 +311,7 @@ export function AgentPanel() {
           <div className="text-body font-medium text-ink">Vision</div>
           <div className="truncate text-[11px] text-ink-subtle">Sees {pathname}</div>
         </div>
+        <GoalChip onClick={showGoal} />
         <ModeChip onClick={showPermissions} />
         <Button
           variant="ghost"
@@ -362,7 +371,12 @@ export function AgentPanel() {
               </div>
             )}
             {entries.map((entry, i) =>
-              entry.role === 'permissions' ? (
+              entry.role === 'goal' ? (
+                <GoalCard
+                  key={i}
+                  onDone={() => setEntries((prev) => prev.filter((e) => e.role !== 'goal'))}
+                />
+              ) : entry.role === 'permissions' ? (
                 <PermissionsCard
                   key={i}
                   onDone={() => setEntries((prev) => prev.filter((e) => e.role !== 'permissions'))}
