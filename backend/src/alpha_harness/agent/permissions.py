@@ -12,10 +12,12 @@ submission is blocked in ``BrainClient`` whatever the mode. The mode is set only
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import structlog
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger(__name__)
 
@@ -31,7 +33,7 @@ class Permissions:
             stored = json.loads(path.read_text()).get("mode")
             if stored in MODES:
                 self._mode = stored
-        except (OSError, ValueError):
+        except OSError, ValueError:
             pass
 
     @property

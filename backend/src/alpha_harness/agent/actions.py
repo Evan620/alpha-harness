@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
-from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 from .registry import (
     AgentContext,
@@ -25,6 +27,7 @@ from .registry import (
     CapabilityRegistry,
     Effect,
     Group,
+    Handler,
     Tier,
     capability,
     deny,
@@ -38,12 +41,18 @@ READ_ONLY_POSTS = re.compile(
     r"|^/api/auth/settings-options$|^/api/vault/alphas/(query|k-ratio)$"
     r"|^/api/vault/mix/(candidates|correlations)$|^/api/harvest/fields$|^/api/analyse/sql$)"
 )
+#: Local writes that spend nothing and are worth having happen freely. A memory that costs
+#: an approval prompt to write does not get written, and then the agent repeats itself.
+AUTO_POSTS = re.compile(r"^/api/journal$")
+
 #: Previews that still spend something are not read-only.
 SPENDING_PREVIEWS = re.compile(r"^/api/power-pool-lab/preview$")
 SPENDS_SIMS = re.compile(
     r"(/run$|/run-all$|/tasks$|/quick$|^/api/simulations(/queue)?$|/start$|/advance$|^/api/plan/lucky$)"
 )
-SPENDS_LLM = re.compile(r"^/api/(llm/(run|advise|power-pool|power-pool/queue|explain)|plan/advise|chat)$")
+SPENDS_LLM = re.compile(
+    r"^/api/(llm/(run|advise|power-pool|power-pool/queue|explain)|plan/advise|chat)$"
+)
 
 HUMAN_ONLY = {
     ("POST", "/api/auth/login"): "Signing in to BRAIN is yours: it can open a biometric check.",
@@ -56,7 +65,10 @@ HUMAN_ONLY = {
     ("DELETE", "/api/llm/keys/{key_id}"): "Removing an LLM key is yours.",
 }
 BLOCKED = {
-    ("POST", "/api/llm/keys"): "An API key is a secret; paste it into LLM Integration → Keys yourself.",
+    (
+        "POST",
+        "/api/llm/keys",
+    ): "An API key is a secret; paste it into LLM Integration → Keys yourself.",
 }
 SKIP = {"/api/health"}
 
@@ -97,6 +109,8 @@ def _classify(method: str, path: str) -> tuple[Tier, frozenset[Effect]]:
         return Tier.AUTO, frozenset({Effect.LOCAL_READ, Effect.LOCAL_WRITE, Effect.BRAIN_READ})
     if method == "POST" and READ_ONLY_POSTS.search(path) and not SPENDING_PREVIEWS.search(path):
         return Tier.AUTO, frozenset({Effect.LOCAL_READ, Effect.BRAIN_READ})
+    if method == "POST" and AUTO_POSTS.search(path):
+        return Tier.AUTO, frozenset({Effect.LOCAL_WRITE})
     effects = {Effect.LOCAL_WRITE}
     if method == "DELETE":
         effects.add(Effect.LOCAL_DESTRUCTIVE)
@@ -109,9 +123,12 @@ def _classify(method: str, path: str) -> tuple[Tier, frozenset[Effect]]:
     return Tier.CONFIRM, frozenset(effects)
 
 
-def _handler(app: FastAPI, method: str, template: str):
-    async def call(state: Any, params: BaseModel, context: AgentContext) -> Any:
-        assert isinstance(params, HttpArgs)
+def _handler(app: FastAPI, method: str, template: str) -> Handler:
+    async def call(_state: Any, params: BaseModel, _context: AgentContext) -> Any:
+        # The registry hands every handler the same three arguments; this one needs
+        # only the parsed params, and its shape is guaranteed by the gate's validation.
+        if not isinstance(params, HttpArgs):  # pragma: no cover - the gate validates
+            raise TypeError(f"{template} received {type(params).__name__}")
         url = template
         for key, value in params.path.items():
             url = url.replace("{" + key + "}", httpx.URL(path=str(value)).raw_path.decode())
@@ -128,7 +145,9 @@ def _handler(app: FastAPI, method: str, template: str):
             response = await client.request(
                 method,
                 url,
-                params={k: str(v).lower() if isinstance(v, bool) else v for k, v in params.query.items()},
+                params={
+                    k: str(v).lower() if isinstance(v, bool) else v for k, v in params.query.items()
+                },
                 json=params.body if method != "GET" else None,
             )
         try:
@@ -172,7 +191,9 @@ def build(app: FastAPI) -> tuple[CapabilityRegistry, dict[str, dict[str, Any]]]:
             key = (method, path)
             summary = (op.get("summary") or name.replace("_", " ")).strip()
             description = f"{method} {path} — {summary}"[:200]
-            explains = ((op.get("description") or summary).strip().splitlines() or [summary])[0][:400]
+            explains = ((op.get("description") or summary).strip().splitlines() or [summary])[0][
+                :400
+            ]
             tags = list(op.get("tags") or [])
             if key in BLOCKED or key in HUMAN_ONLY:
                 blocked = key in BLOCKED
@@ -229,7 +250,9 @@ def search(index: dict[str, dict[str, Any]], query: str, limit: int = 25) -> lis
         return list(index.values())[:limit]
     scored = []
     for entry in index.values():
-        hay = f"{entry['name']} {entry['path']} {entry['summary']} {' '.join(entry['tags'])}".lower()
+        hay = (
+            f"{entry['name']} {entry['path']} {entry['summary']} {' '.join(entry['tags'])}".lower()
+        )
         score = sum(hay.count(w) for w in words)
         if score:
             scored.append((score, entry))
@@ -259,8 +282,12 @@ def request_schema(app: FastAPI, method: str, path: str) -> dict[str, Any]:
         "schema"
     )
     params = [
-        {"name": p.get("name"), "in": p.get("in"), "required": p.get("required", False),
-         "schema": resolve(p.get("schema"))}
+        {
+            "name": p.get("name"),
+            "in": p.get("in"),
+            "required": p.get("required", False),
+            "schema": resolve(p.get("schema")),
+        }
         for p in op.get("parameters", [])
     ]
     out = json.loads(json.dumps({"parameters": params, "body": resolve(body)}, default=str))

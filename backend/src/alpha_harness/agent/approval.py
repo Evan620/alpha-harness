@@ -17,7 +17,6 @@ import os
 import re
 import secrets
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -28,7 +27,6 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from ..config import REPO_ROOT
-from ..tasks import ChangeHook
 from .registry import (
     _GATE_TOKEN,
     LIMITS,
@@ -42,7 +40,10 @@ from .registry import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from ..state import AppState
+    from ..tasks import ChangeHook
 
 log = structlog.get_logger(__name__)
 
@@ -93,11 +94,11 @@ class ApprovalError(RuntimeError):
         self.extra = extra
 
 
-class AgentActionsDisabled(ApprovalError):  # noqa: N818
+class AgentActionsDisabled(ApprovalError):
     status, code = 403, "agent_actions_disabled"
 
 
-class CapabilityBlocked(ApprovalError):  # noqa: N818
+class CapabilityBlocked(ApprovalError):
     status, code = 403, "capability_blocked"
 
 
@@ -105,23 +106,23 @@ class CapabilityArgumentError(ApprovalError):
     status, code = 422, "capability_arguments"
 
 
-class ProposalNotFound(ApprovalError):  # noqa: N818
+class ProposalNotFound(ApprovalError):
     status, code = 404, "proposal_not_found"
 
 
-class ProposalExpired(ApprovalError):  # noqa: N818
+class ProposalExpired(ApprovalError):
     status, code = 410, "proposal_expired"
 
 
-class ProposalAlreadyDecided(ApprovalError):  # noqa: N818
+class ProposalAlreadyDecided(ApprovalError):
     status, code = 409, "proposal_already_decided"
 
 
-class ProposalPayloadMismatch(ApprovalError):  # noqa: N818
+class ProposalPayloadMismatch(ApprovalError):
     status, code = 409, "proposal_payload_mismatch"
 
 
-class TooManyProposals(ApprovalError):  # noqa: N818
+class TooManyProposals(ApprovalError):
     status, code = 429, "too_many_proposals"
 
 
@@ -485,7 +486,7 @@ class ApprovalGate:
 
         try:
             result = await self._execute(cap, params, proposal.context)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - a handler must not break the gate
             proposal.status = ProposalStatus.FAILED
             proposal.error_code = exc.code if isinstance(exc, ApprovalError) else type(exc).__name__
             proposal.error_message = clip(str(exc) or type(exc).__name__, 280)

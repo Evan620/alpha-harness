@@ -75,7 +75,9 @@ async def turn(payload: TurnRequest, request: Request) -> StreamingResponse:
 async def decide(proposal_id: str, payload: DecisionRequest, request: Request) -> StreamingResponse:
     service = _service(request)
     return _ndjson(
-        service.decide(proposal_id, payload.payload_hash, payload.approve, _context(payload.context))
+        service.decide(
+            proposal_id, payload.payload_hash, payload.approve, _context(payload.context)
+        )
     )
 
 
@@ -104,7 +106,11 @@ def _always_yours(service: AgentService) -> list[dict[str, str]]:
         if e["tier"] in {"human_only", "blocked"}
     ]
     rows.append(
-        {"action": "Submit an alpha to BRAIN", "summary": "Blocked in the BRAIN client", "tier": "blocked"}
+        {
+            "action": "Submit an alpha to BRAIN",
+            "summary": "Blocked in the BRAIN client",
+            "tier": "blocked",
+        }
     )
     return rows
 

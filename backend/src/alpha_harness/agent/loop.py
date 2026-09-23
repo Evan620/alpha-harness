@@ -12,19 +12,23 @@ import asyncio
 import itertools
 import json
 import time
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import structlog
-from fastapi import FastAPI
+from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from fastapi import FastAPI
 
 from ..llm.providers import get as provider_spec
 from ..llm.registry import DEEP_MODEL
 from . import actions, guide
-from .doctrine import DOCTRINE
 from .approval import ApprovalError, ApprovalGate
+from .doctrine import DOCTRINE
 from .permissions import Permissions
 from .registry import AgentContext, UnknownCapability
 
@@ -45,7 +49,9 @@ TOOLS: list[dict[str, Any]] = [
             "description": "What a page of this app is for, what is on it and its key actions.",
             "parameters": {
                 "type": "object",
-                "properties": {"route": {"type": "string", "description": "e.g. /pool/submittable"}},
+                "properties": {
+                    "route": {"type": "string", "description": "e.g. /pool/submittable"}
+                },
                 "required": ["route"],
             },
         },
@@ -66,7 +72,9 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "describe_action",
-            "description": "Query parameters and JSON body schema for one action, before calling it.",
+            "description": (
+                "Query parameters and JSON body schema for one action, before calling it."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
@@ -87,9 +95,16 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "path": {"type": "object", "description": "Path parameters", "additionalProperties": {"type": "string"}},
+                    "path": {
+                        "type": "object",
+                        "description": "Path parameters",
+                        "additionalProperties": {"type": "string"},
+                    },
                     "query": {"type": "object", "description": "Query-string parameters"},
-                    "body": {"type": "object", "description": "JSON body, when the action takes one"},
+                    "body": {
+                        "type": "object",
+                        "description": "JSON body, when the action takes one",
+                    },
                 },
                 "required": ["name"],
             },
@@ -102,7 +117,9 @@ TOOLS: list[dict[str, Any]] = [
             "description": "Move the person's screen to a page of the app so they can see it.",
             "parameters": {
                 "type": "object",
-                "properties": {"to": {"type": "string", "description": "An app route, e.g. /labs/search"}},
+                "properties": {
+                    "to": {"type": "string", "description": "An app route, e.g. /labs/search"}
+                },
                 "required": ["to"],
             },
         },
@@ -118,11 +135,13 @@ def _mode_rules(mode: str) -> str:
         return (
             "- Permission mode is AUTO (the person chose it): actions run as soon as you call\n"
             "  them. Before anything destructive they did not explicitly ask for (deleting,\n"
-            "  dropping the queue, stopping work, a big simulation spend) say what you will do and\n"
+            "dropping the queue, stopping work, a big simulation spend) say what you will do "
+            "and\n"
             "  ask in chat first. Report what actually ran, with the real result."
         )
     return (
-        "- Permission mode is ASK: reads run at once; writes, simulations and LLM spends come back\n"
+        "- Permission mode is ASK: reads run at once; writes, simulations and LLM spends come "
+        "back\n"
         "  needs_approval. Say in one line what you proposed and that it waits for their Approve\n"
         "  click. Never claim it ran until it did. They can switch to auto with /permissions."
     )
@@ -137,8 +156,8 @@ def _system(context: dict[str, Any]) -> str:
     )
     visible = (context.get("visibleText") or "")[:VISIBLE_CHARS]
     scope = context.get("scope")
-    return f"""You are Vision, the agent built into Alpha Harness, a local studio for WorldQuant BRAIN
-research. You can do anything the person can do in this UI through tools, you can see the page
+    return f"""You are Vision, the agent built into Alpha Harness, a local studio for WorldQuant
+BRAIN research. You can do anything the person can do in this UI through tools, you can see the page
 they are on, and your job is to make them effective on the platform fast.
 
 HOW TO WORK
@@ -212,12 +231,22 @@ class AgentService:
         thread = self._thread(proposal.thread_id if proposal else None)
         try:
             if approve:
-                yield {"type": "tool_start", "id": proposal_id, "tool": "approved",
-                       "label": proposal.label if proposal else proposal_id, "args": {}}
+                yield {
+                    "type": "tool_start",
+                    "id": proposal_id,
+                    "tool": "approved",
+                    "label": proposal.label if proposal else proposal_id,
+                    "args": {},
+                }
                 result = await self.gate.approve(proposal_id, payload_hash or "")
                 outcome = json.dumps(result.to_dict(), default=str)
-                yield {"type": "tool_end", "id": proposal_id, "status": result.status,
-                       "httpStatus": _http_status(result.result), "preview": _preview(result.result)}
+                yield {
+                    "type": "tool_end",
+                    "id": proposal_id,
+                    "status": result.status,
+                    "httpStatus": _http_status(result.result),
+                    "preview": _preview(result.result),
+                }
                 note = f"[The person APPROVED {result.tool}. It ran. Result: {outcome[:4_000]}]"
             else:
                 rejected = await self.gate.reject(proposal_id, reason="Rejected in the agent panel")
@@ -264,11 +293,21 @@ class AgentService:
                     except ValueError:
                         args = {}
                     call_id = call.get("id", "")
-                    yield {"type": "tool_start", "id": call_id, "tool": name, "args": args,
-                           "label": self._label(name, args)}
+                    yield {
+                        "type": "tool_start",
+                        "id": call_id,
+                        "tool": name,
+                        "args": args,
+                        "label": self._label(name, args),
+                    }
                     output, step = await self._tool(thread, call_id, name, args, context)
-                    yield {"type": "tool_end", "id": call_id, "status": step["status"],
-                           "httpStatus": step.get("httpStatus"), "preview": _preview(output)}
+                    yield {
+                        "type": "tool_end",
+                        "id": call_id,
+                        "status": step["status"],
+                        "httpStatus": step.get("httpStatus"),
+                        "preview": _preview(output),
+                    }
                     if step.get("proposal"):
                         yield {"type": "proposal", "proposal": step["proposal"]}
                     if name == "navigate" and step["status"] == "ok":
@@ -277,12 +316,20 @@ class AgentService:
                         {
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": json.dumps(output, default=str)[: actions.RESULT_CHARS + 500],
+                            "content": json.dumps(output, default=str)[
+                                : actions.RESULT_CHARS + 500
+                            ],
                         }
                     )
             else:
                 thread.messages.append(
-                    {"role": "user", "content": "[Step limit reached. Do not call tools. Answer now with what you have.]"}
+                    {
+                        "role": "user",
+                        "content": (
+                            "[Step limit reached. Do not call tools."
+                            " Answer now with what you have.]"
+                        ),
+                    }
                 )
                 message = {}
                 async for kind, value in self._complete(thread, context, tools=False):
@@ -327,7 +374,10 @@ class AgentService:
                 if entry is None:
                     step["status"] = "error"
                     return {"error": "unknown action; use find_actions"}, step
-                return {**entry, **actions.request_schema(self.app, entry["method"], entry["path"])}, step
+                return {
+                    **entry,
+                    **actions.request_schema(self.app, entry["method"], entry["path"]),
+                }, step
             if name == "navigate":
                 return {"navigated": args.get("to")}, step
             if name == "call_action":
@@ -420,7 +470,7 @@ class AgentService:
         yield "message", message
 
 
-class _RateLimited(Exception):  # noqa: N818
+class _RateLimited(Exception):
     def __init__(self, retry_after: float | None) -> None:
         super().__init__("rate limited")
         self.retry_after = retry_after
@@ -478,6 +528,7 @@ async def _stream_once(
                         slot["function"]["arguments"] += fn["arguments"]
     state.update(content=content, calls=calls, tokens=tokens)
 
+
 def _http_status(result: Any) -> int | None:
     return result.get("status") if isinstance(result, dict) else None
 
@@ -493,6 +544,9 @@ def _preview(output: Any) -> str:
 def _agent_context(context: dict[str, Any]) -> AgentContext:
     pathname = str(context.get("pathname") or "")
     try:
-        return AgentContext(pathname=pathname, area=context.get("area"), area_label=context.get("title"))
-    except Exception:
+        return AgentContext(
+            pathname=pathname, area=context.get("area"), area_label=context.get("title")
+        )
+    except ValidationError:
+        # A pathname the model invented must not end the turn; an empty context still works.
         return AgentContext()

@@ -594,3 +594,28 @@ class Submission(Base):
 
     alpha_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     submitted_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+
+
+class ResearchNote(Base):
+    """What was tried, what came of it, and what is therefore not worth trying again.
+
+    The agent's memory. Without it every session re-runs ground already covered: this
+    account once spent a day re-testing a family that had been declared dead on a reading
+    of the screen that a later look overturned. A note is small, written by whoever learned
+    the thing, and searched before a sweep is proposed.
+    """
+
+    __tablename__ = "research_note"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    #: finding | dead_end | decision | idea. Kept as text: the vocabulary will grow.
+    kind: Mapped[str] = mapped_column(String(24), default="finding")
+    #: What it is about, e.g. a dataset id, an alpha id, a family name, a scope.
+    subject: Mapped[str] = mapped_column(String(128), default="")
+    #: ``USA/1/TOP3000`` when the note is scope-specific, empty when it is general.
+    scope: Mapped[str] = mapped_column(String(48), default="")
+    body: Mapped[str] = mapped_column(Text)
+    tags: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    #: "vision" or "human", so a claim can be weighed by who made it.
+    author: Mapped[str] = mapped_column(String(24), default="vision")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)

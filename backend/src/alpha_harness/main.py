@@ -34,6 +34,7 @@ from .api import (
     catalog,
     chat,
     ga,
+    journal,
     lab_tasks,
     llm,
     portfolio,
@@ -177,6 +178,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(agent.router)
     app.include_router(analyse.router)
+    app.include_router(journal.router)
     app.include_router(update.router)
     app.include_router(ws.router)
 

@@ -44,25 +44,37 @@ PAGES: tuple[Page, ...] = (
         "Every data field in a market, filterable, with coverage and how often it is used.",
         "Pick a scope (region · delay · universe), then browse datasets and fields. A field opens "
         "its detail: type, coverage, alpha count and availability across regions. Fields with high "
-        "coverage and a low alpha count are the uncrowded ones. The Market tab shows the sync state.",
-        ("POST /api/catalog/fields", "GET /api/catalog/datasets", "GET /api/catalog/fields/{field_id}"),
+        "coverage and a low alpha count are the uncrowded ones. The Market tab shows the sync "
+        "state.",
+        (
+            "POST /api/catalog/fields",
+            "GET /api/catalog/datasets",
+            "GET /api/catalog/fields/{field_id}",
+        ),
     ),
     Page(
         "/labs",
         "Research Labs",
-        "The four generators that write alphas for you: Search, Template, Evolution, LLM Power Pool.",
+        "The four generators that write alphas for you: Search, Template, Evolution, LLM Power "
+        "Pool.",
         "Each lab is configured on its own page and adds a task to Tasks, where it actually runs. "
         "Search writes one- and two-operator alphas from chosen datasets; Template fills a block "
-        "template; Evolution breeds seed alphas; Power Pool asks the LLM for Power-Pool-sized alphas.",
+        "template; Evolution breeds seed alphas; Power Pool asks the LLM for Power-Pool-sized "
+        "alphas.",
         ("GET /api/labs",),
     ),
     Page(
         "/labs/search",
         "Search Lab",
-        "Choose datasets, cores and a simulation budget; it writes simple alphas steering to Sharpe.",
+        "Choose datasets, cores and a simulation budget; it writes simple alphas steering to "
+        "Sharpe.",
         "Adds a search task to Tasks. It generates one- and two-operator expressions from the "
         "chosen datasets' fields and spends real BRAIN simulations when the task runs.",
-        ("GET /api/search-lab/options", "POST /api/search-lab/preview", "POST /api/search-lab/tasks"),
+        (
+            "GET /api/search-lab/options",
+            "POST /api/search-lab/preview",
+            "POST /api/search-lab/tasks",
+        ),
     ),
     Page(
         "/labs/template",
@@ -70,14 +82,23 @@ PAGES: tuple[Page, ...] = (
         "Build an expression template from blocks, then sweep its slots with fields and operators.",
         "A Scratch-style builder: drag operator blocks onto slots or click a slot to pick. Preview "
         "shows how many expressions the template expands to; adding it creates a task in Tasks.",
-        ("GET /api/template-lab/templates", "POST /api/template-lab/preview", "POST /api/template-lab/tasks"),
+        (
+            "GET /api/template-lab/templates",
+            "POST /api/template-lab/preview",
+            "POST /api/template-lab/tasks",
+        ),
     ),
     Page(
         "/labs/evolution",
         "Evolution Lab",
-        "Breed seed alphas into children, scored on the first 8 years so the last 2 stay out-of-sample.",
+        "Breed seed alphas into children, scored on the first 8 years so the last 2 stay "
+        "out-of-sample.",
         "Pick seeds (or auto-seed), cores and simulations, then add the breeding to Tasks.",
-        ("POST /api/evolution-lab/seeds/auto", "POST /api/evolution-lab/preview", "POST /api/evolution-lab/tasks"),
+        (
+            "POST /api/evolution-lab/seeds/auto",
+            "POST /api/evolution-lab/preview",
+            "POST /api/evolution-lab/tasks",
+        ),
     ),
     Page(
         "/labs/power-pool",
@@ -101,7 +122,8 @@ PAGES: tuple[Page, ...] = (
         "/tools/settings-sampler",
         "Settings Sampler",
         "Sweep one alpha across simulation settings (neutralization, decay, truncation...).",
-        "Preview shows the settings grid; adding it creates a task in Tasks that spends simulations.",
+        "Preview shows the settings grid; adding it creates a task in Tasks that spends "
+        "simulations.",
         ("POST /api/tools/settings-sampler/preview", "POST /api/tools/settings-sampler/tasks"),
     ),
     Page(
@@ -117,15 +139,23 @@ PAGES: tuple[Page, ...] = (
         "Correlation Breaker",
         "Re-shape an alpha already in the Production Pool into less-correlated variants.",
         "Preview the variants, then add a task that simulates them.",
-        ("POST /api/tools/correlation-breaker/preview", "POST /api/tools/correlation-breaker/tasks"),
+        (
+            "POST /api/tools/correlation-breaker/preview",
+            "POST /api/tools/correlation-breaker/tasks",
+        ),
     ),
     Page(
         "/tasks",
         "Tasks",
-        "Everything the labs and tools added. Only here does a task run, pause or stop; a row opens its results.",
+        "Everything the labs and tools added. Only here does a task run, pause or stop; a row "
+        "opens its results.",
         "Each row is a lab task with its progress and best result. Run, pause, stop, change or "
         "remove a task; open its top alphas.",
-        ("GET /api/lab-tasks", "POST /api/lab-tasks/{task_id}/run", "GET /api/lab-tasks/{task_id}/top"),
+        (
+            "GET /api/lab-tasks",
+            "POST /api/lab-tasks/{task_id}/run",
+            "GET /api/lab-tasks/{task_id}/top",
+        ),
     ),
     Page(
         "/pool",
@@ -135,7 +165,11 @@ PAGES: tuple[Page, ...] = (
         "alphas that pass the platform's checks for a scope, plus near-misses one fix away. An "
         "alpha opens its detail: PnL, settings, submission checks and correlations on request. "
         "Submitting to BRAIN is never done by the agent.",
-        ("POST /api/alphas/search", "GET /api/vault/submittable", "GET /api/alphas/{alpha_id}/check"),
+        (
+            "POST /api/alphas/search",
+            "GET /api/vault/submittable",
+            "GET /api/alphas/{alpha_id}/check",
+        ),
     ),
     Page(
         "/alpha",
@@ -145,7 +179,11 @@ PAGES: tuple[Page, ...] = (
         "investability-constrained PnL, drawdown, yearly Sharpe, correlations and properties. "
         "Properties (name, category, colour, tags, description) save to BRAIN but never submit. "
         "A region-agnostic alpha is one of a family of four judged together.",
-        ("GET /api/alphas/{alpha_id}", "GET /api/alphas/{alpha_id}/check", "PATCH /api/alphas/{alpha_id}"),
+        (
+            "GET /api/alphas/{alpha_id}",
+            "GET /api/alphas/{alpha_id}/check",
+            "PATCH /api/alphas/{alpha_id}",
+        ),
     ),
     Page(
         "/portfolio",
@@ -168,8 +206,10 @@ PAGES: tuple[Page, ...] = (
         "/pyramids",
         "Sync with BRAIN",
         "Download every market's data fields, and see the pyramid multipliers you are earning.",
-        "The sync matrix downloads data fields per market. The pyramid map shows BRAIN's multiplier "
-        "for each Region · Delay · Category, with a tick where 3+ of your alphas count this quarter. "
+        "The sync matrix downloads data fields per market. The pyramid map shows BRAIN's "
+        "multiplier"
+        "for each Region · Delay · Category, with a tick where 3+ of your alphas count this "
+        "quarter."
         "Higher-multiplier scopes pay more for the same alpha.",
         ("POST /api/catalog/sync", "GET /api/catalog/pyramids", "POST /api/vault/sync"),
     ),
@@ -181,9 +221,9 @@ def page_for(route: str) -> Page | None:
     route = route or "/"
     best: Page | None = None
     for page in PAGES:
-        if route == page.route or route.startswith(page.route + "/"):
-            if best is None or len(page.route) > len(best.route):
-                best = page
+        matches = route == page.route or route.startswith(page.route + "/")
+        if matches and (best is None or len(page.route) > len(best.route)):
+            best = page
     return best
 
 

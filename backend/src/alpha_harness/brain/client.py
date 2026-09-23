@@ -170,7 +170,7 @@ def _parse_retry_after(headers: httpx.Headers) -> float | None:
     return max(seconds, 0.0)
 
 
-class BrainRequestBlocked(BrainError):  # noqa: N818
+class BrainRequestBlocked(BrainError):
     """Refused locally before the request was sent. Never reaches the network."""
 
     retryable = False

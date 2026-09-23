@@ -67,13 +67,13 @@ class Effect(StrEnum):
     LLM_BUDGET = "llm_budget"
     BACKGROUND_JOB = "background_job"
     CREDENTIAL = "credential"
-    SECRET_INPUT = "secret_input"
+    SECRET_INPUT = "secret_input"  # noqa: S105 - an effect name, not a credential
 
 
 class Group(StrEnum):
     ORIENT = "orient"
     ALPHA = "alpha"
-    PASS = "pass"
+    PASS = "pass"  # noqa: S105 - a capability group, not a credential
     CATALOG = "catalog"
     ACT = "act"
 
@@ -82,7 +82,7 @@ class CapabilityDeclarationError(ValueError):
     """A capability declaration violates the frozen registry contract."""
 
 
-class UnknownCapability(LookupError):  # noqa: N818
+class UnknownCapability(LookupError):
     """The requested capability is not registered."""
 
     def __init__(self, name: str) -> None:
@@ -94,7 +94,7 @@ class MissingScopeError(ValueError):
     """Neither the call nor the current agent context supplied a scope."""
 
 
-class GateBypass(RuntimeError):  # noqa: N818
+class GateBypass(RuntimeError):
     """Something tried to execute a capability without going through ApprovalGate."""
 
 
