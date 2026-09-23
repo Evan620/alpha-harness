@@ -21,6 +21,7 @@ import structlog
 from fastapi import FastAPI
 
 from ..llm.providers import get as provider_spec
+from ..llm.registry import DEEP_MODEL
 from . import actions, guide
 from .approval import ApprovalError, ApprovalGate
 from .permissions import Permissions
@@ -28,7 +29,9 @@ from .registry import AgentContext, UnknownCapability
 
 log = structlog.get_logger(__name__)
 
-MODEL = "glm-5.3"
+#: One source of truth with the rest of the app (llm/registry.py). Vision reasons and calls
+#: tools, so it takes the stronger of the two rather than the bulk model.
+MODEL = DEEP_MODEL
 MAX_ROUNDS = 16
 HISTORY_LIMIT = 40
 VISIBLE_CHARS = 3_500

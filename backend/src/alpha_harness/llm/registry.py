@@ -228,9 +228,17 @@ BUILTIN: tuple[ModelInfo, ...] = (
 #: row, so an unknown model cannot silently burn a day's quota.
 UNKNOWN_LIMITS = {"rpm": 5, "tpm": 250_000, "rpd": 20}
 
-DEFAULT_MODEL = "gemini-3.5-flash-lite"
+#: For a paid provider, where the person's own spend limit is the only real ceiling. A daily
+#: request budget of 0 already means "no cap" to :meth:`Ledger.headroom`; per-minute limits
+#: cannot use 0, which would read as "none allowed", so they take this instead.
+NO_LIMIT = 1_000_000_000
+
+#: Every LLM-powered feature here runs on GLM unless the person picks another model: it is
+#: the provider this operator subscribes to, and the only one with a key. Flash for bulk work
+#: (the Power Pool lab writes many alphas per run), the full model for one hard question.
+DEFAULT_MODEL = "glm-5.3-flash"
 #: For a single hard question where quality matters more than the daily budget.
-DEEP_MODEL = "gemini-3.8-flash"
+DEEP_MODEL = "glm-5.3"
 
 
 class ModelRegistry:
@@ -271,9 +279,12 @@ class ModelRegistry:
         ]
         return sorted(models, key=lambda m: (-m.rpd, -m.rpm, m.id))
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, providers: set[str] | None = None) -> dict[str, Any]:
+        """The roster. ``providers`` narrows it to the ones a Key can actually answer for,
+        so a chooser never offers a model whose first use would be an error."""
+        models = [m for m in self.all() if providers is None or m.provider in providers]
         return {
-            "models": [m.to_dict() for m in self.all()],
+            "models": [m.to_dict() for m in models],
             "defaults": {"chat": DEFAULT_MODEL, "deep": DEEP_MODEL},
             "note": (
                 "Requests per day is the limit that ends a session — it does not reset "
@@ -302,17 +313,27 @@ class ModelRegistry:
                 if "gemma" in model_id
                 else "text"
             )
+            # A paid account is billed per token and publishes no daily request cap, so
+            # UNKNOWN_LIMITS (a free tier's twenty a day) would invent a ceiling that stops
+            # work the person has already paid for. Their own spend limit is the real one.
+            from .providers import get as provider_spec
+
+            paid = provider_spec(provider).paid
             self._models[model_id] = ModelInfo(
                 id=model_id,
                 label=model_id.replace("-", " ").title(),
                 kind=kind,
-                summary="Reported by the API. Its free-tier limits are unknown, so a "
-                "conservative budget is assumed until you correct it.",
+                summary=(
+                    "Reported by the API on a paid account, so no daily cap is imposed here."
+                    if paid
+                    else "Reported by the API. Its free-tier limits are unknown, so a "
+                    "conservative budget is assumed until you correct it."
+                ),
                 discovered=True,
                 provider=provider,
-                rpm=UNKNOWN_LIMITS["rpm"],
-                tpm=UNKNOWN_LIMITS["tpm"],
-                rpd=UNKNOWN_LIMITS["rpd"],
+                rpm=NO_LIMIT if paid else UNKNOWN_LIMITS["rpm"],
+                tpm=NO_LIMIT if paid else UNKNOWN_LIMITS["tpm"],
+                rpd=0 if paid else UNKNOWN_LIMITS["rpd"],
             )
             added.append(model_id)
         if added:

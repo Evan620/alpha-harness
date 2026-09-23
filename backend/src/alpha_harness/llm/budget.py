@@ -117,7 +117,13 @@ class Headroom:
         return self.blocked_by is None
 
     @property
+    def daily_unlimited(self) -> bool:
+        """A ceiling of zero means no daily cap, not a spent one (see :meth:`headroom`)."""
+        return self.requests_per_day <= 0
+
+    @property
     def daily_remaining(self) -> int:
+        """Zero when uncapped too, so read :attr:`daily_unlimited` before showing this."""
         return max(0, self.requests_per_day - self.requests_today)
 
     def to_dict(self) -> dict[str, Any]:
@@ -130,6 +136,7 @@ class Headroom:
             "requestsToday": self.requests_today,
             "requestsPerDay": self.requests_per_day,
             "dailyRemaining": self.daily_remaining,
+            "dailyUnlimited": self.daily_unlimited,
             "requestsThisMinute": self.requests_this_minute,
             "requestsPerMinute": self.requests_per_minute,
             "tokensThisMinute": self.tokens_this_minute,

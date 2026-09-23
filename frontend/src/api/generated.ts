@@ -4,6 +4,95 @@
  */
 
 export interface paths {
+    "/api/agent/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog */
+        get: operations["catalog_api_agent_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Permissions */
+        get: operations["get_permissions_api_agent_permissions_get"];
+        /**
+         * Set Permissions
+         * @description Set by the person in the UI. Excluded from Vision's catalog, so it cannot set its own.
+         */
+        put: operations["set_permissions_api_agent_permissions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Proposals */
+        get: operations["proposals_api_agent_proposals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/proposals/{proposal_id}/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide */
+        post: operations["decide_api_agent_proposals__proposal_id__decide_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/turn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Turn */
+        post: operations["turn_api_agent_turn_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/alphas/summary": {
         parameters: {
             query?: never;
@@ -2690,6 +2779,14 @@ export interface components {
             /** Value Score */
             value_score: number | null;
         };
+        /** DecisionRequest */
+        DecisionRequest: {
+            /** Approve */
+            approve: boolean;
+            context?: components["schemas"]["PageContext"];
+            /** Payload Hash */
+            payload_hash?: string | null;
+        };
         /** DropResult */
         DropResult: {
             /** Dropped */
@@ -3008,6 +3105,11 @@ export interface components {
             provider: string;
             /** Remainingtoday */
             remainingToday: number;
+            /**
+             * Unlimited
+             * @default false
+             */
+            unlimited: boolean;
         };
         /** LLMContextRendered */
         LLMContextRendered: {
@@ -3366,6 +3468,27 @@ export interface components {
             /** Vector */
             vector: string[];
         };
+        /** PageContext */
+        PageContext: {
+            /** Area */
+            area?: string | null;
+            /**
+             * Pathname
+             * @default
+             */
+            pathname: string;
+            /** Scope */
+            scope?: {
+                [key: string]: unknown;
+            } | null;
+            /** Title */
+            title?: string | null;
+            /**
+             * Visible Text
+             * @default
+             */
+            visible_text: string;
+        };
         /** Pair */
         Pair: {
             /** Maxposition */
@@ -3411,6 +3534,14 @@ export interface components {
             inSample: components["schemas"]["Period"];
             test: components["schemas"]["Period"] | null;
             train: components["schemas"]["Period"] | null;
+        };
+        /** PermissionsRequest */
+        PermissionsRequest: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "ask" | "auto";
         };
         /** Pick */
         Pick: {
@@ -3592,6 +3723,11 @@ export interface components {
             remainingToday: number;
             /** Tpm */
             tpm: number;
+            /**
+             * Unlimited
+             * @default false
+             */
+            unlimited: boolean;
         };
         /** PowerPoolOptions */
         PowerPoolOptions: {
@@ -4728,6 +4864,14 @@ export interface components {
             /** Used */
             used: number;
         };
+        /** TurnRequest */
+        TurnRequest: {
+            context?: components["schemas"]["PageContext"];
+            /** Text */
+            text: string;
+            /** Thread Id */
+            thread_id?: number | null;
+        };
         /** TypeFacet */
         TypeFacet: {
             /** Id */
@@ -4890,6 +5034,175 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    catalog_api_agent_actions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    get_permissions_api_agent_permissions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    set_permissions_api_agent_permissions_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PermissionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    proposals_api_agent_proposals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    decide_api_agent_proposals__proposal_id__decide_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    turn_api_agent_turn_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TurnRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     summary_api_alphas_summary_get: {
         parameters: {
             query?: never;

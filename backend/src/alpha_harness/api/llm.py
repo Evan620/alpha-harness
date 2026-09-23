@@ -84,6 +84,8 @@ class LLMBudget(Out):
     per_key_per_day: int
     remaining_today: int
     bulk: bool
+    #: No daily request ceiling, so ``remaining_today`` is not a countdown.
+    unlimited: bool = False
 
 
 class LLMKeyStatus(Out):

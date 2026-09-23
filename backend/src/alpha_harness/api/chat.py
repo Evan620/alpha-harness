@@ -108,9 +108,12 @@ class ChatReply(Out):
 @router.get("/options")
 async def options(state: State) -> ChatOptions:
     """The two choices a conversation offers: which model, and how hard to think."""
+    # Only models a Key can answer for. With no Keys at all the whole roster is shown, so the
+    # screen still says what is possible rather than going blank.
+    keyed = {k.provider for k in await state.llm.keys.list_keys() if k.enabled}
     return ChatOptions.model_validate(
         {
-            "models": state.llm.registry.to_dict(),
+            "models": state.llm.registry.to_dict(keyed or None),
             "reasoning": reasoning_options(),
             "defaultReasoning": DEFAULT_REASONING,
             "note": (

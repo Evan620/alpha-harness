@@ -287,10 +287,12 @@ class KeyStore:
             # Starts at the model's own number so a model whose keys are all disabled still
             # shows what it would allow, rather than a ceiling of zero.
             per_key = model.rpd
+            uncapped = False
             for row in usable:
                 state = await self.ledger.headroom(row.id, model, cap=row.daily_limit)
                 remaining += state.daily_remaining
                 per_key = max(per_key, state.requests_per_day)
+                uncapped = uncapped or state.daily_unlimited
             budget.append(
                 {
                     "model": model.id,
@@ -299,6 +301,8 @@ class KeyStore:
                     "perKeyPerDay": per_key,
                     "remainingToday": remaining,
                     "bulk": model.bulk,
+                    # No daily ceiling: a remainingToday of 0 would otherwise read as spent.
+                    "unlimited": uncapped or (not usable and model.rpd <= 0),
                 }
             )
 

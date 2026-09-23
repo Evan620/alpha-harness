@@ -33,7 +33,9 @@ export function Budget() {
   const status = keys.data
   const enabledFor = (provider: string) =>
     status.keys.filter((k) => k.enabled && k.provider === provider).length
-  const bulkLeft = status.budget.filter((b) => b.bulk).reduce((s, b) => s + b.remainingToday, 0)
+  const bulkBudget = status.budget.filter((b) => b.bulk)
+  const bulkUncapped = bulkBudget.some((b) => b.unlimited)
+  const bulkLeft = bulkBudget.reduce((s, b) => s + b.remainingToday, 0)
   const day = quotaDay(status.quotaTimezone)
 
   const perKey: KeyModelRow[] = status.keys
@@ -72,12 +74,21 @@ export function Budget() {
       header: 'Requests left / RPD',
       width: 'minmax(200px,1.2fr)',
       cell: (r) => {
+        // A daily ceiling of zero means the provider imposes none (a paid account), so there
+        // is nothing to count down: say so rather than showing an empty bar at 0 / 0.
+        if (r.model.rpd <= 0) {
+          return (
+            <span className="text-body-compact text-ink-muted">
+              No daily cap · {fmt.int(r.requests)} used
+            </span>
+          )
+        }
         const left = Math.max(0, r.model.rpd - r.requests)
         return (
           <div className="flex w-full items-center gap-2">
             <Progress
               className="flex-1"
-              value={r.model.rpd ? left / r.model.rpd : null}
+              value={left / r.model.rpd}
               label={`${r.model.label} requests left`}
             />
             <span className="num shrink-0 text-body-compact text-ink-muted">
@@ -154,7 +165,7 @@ export function Budget() {
       header: 'RPD',
       width: '80px',
       align: 'right',
-      cell: (m) => fmt.int(m.rpd),
+      cell: (m) => (m.rpd > 0 ? fmt.int(m.rpd) : '—'),
     },
     {
       key: 'notes',
@@ -176,7 +187,7 @@ export function Budget() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric
             label="Assistant requests left today"
-            value={fmt.int(bulkLeft)}
+            value={bulkUncapped ? 'No cap' : fmt.int(bulkLeft)}
             hint="Bulk models, across every enabled Key."
           />
           <Metric
@@ -221,13 +232,17 @@ export function Budget() {
                       {b.bulk && <Badge tone="outline">Bulk</Badge>}
                     </span>
                     <span className="num text-ink-muted">
-                      {fmt.int(b.remainingToday)} / {fmt.int(total)}
+                      {b.unlimited
+                        ? 'No daily cap'
+                        : `${fmt.int(b.remainingToday)} / ${fmt.int(total)}`}
                     </span>
                   </div>
-                  <Progress
-                    value={total ? b.remainingToday / total : null}
-                    label={`${b.label} requests left`}
-                  />
+                  {!b.unlimited && (
+                    <Progress
+                      value={total ? b.remainingToday / total : null}
+                      label={`${b.label} requests left`}
+                    />
+                  )}
                 </div>
               )
             })}

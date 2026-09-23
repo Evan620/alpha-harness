@@ -48,6 +48,8 @@ class PowerPoolModel(Out):
     provider: str
     tpm: int
     remaining_today: int
+    #: No daily request ceiling, so ``remaining_today`` is not a countdown.
+    unlimited: bool = False
 
 
 class PowerPoolOptions(Out):
@@ -81,7 +83,8 @@ async def _models(state: Any) -> list[dict[str, Any]]:
         mine = [k for k in keys if k.provider == m.provider]
         if m.kind == "embedding" or not mine:
             continue
-        left = sum([(await state.llm.ledger.headroom(k.id, m)).daily_remaining for k in mine])
+        states = [await state.llm.ledger.headroom(k.id, m) for k in mine]
+        left = sum(h.daily_remaining for h in states)
         out.append(
             {
                 "id": m.id,
@@ -89,6 +92,8 @@ async def _models(state: Any) -> list[dict[str, Any]]:
                 "provider": m.provider,
                 "tpm": m.tpm,
                 "remainingToday": left,
+                # No daily ceiling (a paid account): 0 remaining would otherwise read as spent.
+                "unlimited": any(h.daily_unlimited for h in states),
             }
         )
     return out

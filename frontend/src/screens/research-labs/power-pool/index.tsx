@@ -160,7 +160,9 @@ export function PowerPoolLabScreen() {
                 label="Model"
                 items={models.map((m) => ({
                   value: m.id,
-                  label: `${m.label} · ${fmt.int(m.remainingToday)} left today`,
+                  label: m.unlimited
+                    ? `${m.label} · no daily cap`
+                    : `${m.label} · ${fmt.int(m.remainingToday)} left today`,
                 }))}
                 value={model}
                 onChange={(v) => draft.set({ model: v })}

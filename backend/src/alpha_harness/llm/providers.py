@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .registry import ModelInfo
+from .registry import NO_LIMIT, ModelInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +60,6 @@ class Provider:
             "openaiCompatible": self.openai_compatible,
             "models": [m.to_dict() for m in self.models],
         }
-
-
-#: Effectively no local cap, for a paid plan the operator chose not to meter here.
-UNLIMITED = 1_000_000_000
 
 
 def _model(
@@ -366,9 +362,9 @@ PROVIDERS: dict[str, Provider] = {
                 "glm-5.3",
                 "GLM-5.3",
                 "zai",
-                rpm=UNLIMITED,
+                rpm=NO_LIMIT,
                 rpd=0,
-                tpm=UNLIMITED,
+                tpm=NO_LIMIT,
                 summary="Strong reasoning model, 1M context. The better answer of the two.",
                 recommended=True,
             ),
@@ -376,9 +372,9 @@ PROVIDERS: dict[str, Provider] = {
                 "glm-5.3-flash",
                 "GLM-5.3 Flash",
                 "zai",
-                rpm=UNLIMITED,
+                rpm=NO_LIMIT,
                 rpd=0,
-                tpm=UNLIMITED,
+                tpm=NO_LIMIT,
                 summary="Faster and cheaper on the same plan. For bulk work.",
                 bulk=True,
             ),
