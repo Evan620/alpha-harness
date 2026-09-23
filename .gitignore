@@ -16,3 +16,6 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 *.tsbuildinfo
+
+/backend.log
+/frontend.log
