@@ -24,7 +24,7 @@ freely".
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 import structlog
@@ -71,6 +71,19 @@ class Goal:
     wait_until: float = 0.0
     thread_id: int | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
+    #: The page the person was on when they set it: goal turns run with no tab to ask.
+    context: dict[str, Any] = field(default_factory=dict)
+    #: What to say when a WAIT releases, from the judge's verdict.
+    resume_prompt: str = ""
+
+    def to_record(self) -> dict[str, Any]:
+        """Everything, for persistence. :meth:`to_dict` is the trimmed view for the UI."""
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    @classmethod
+    def from_record(cls, data: dict[str, Any]) -> Goal:
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
     @property
     def running(self) -> bool:

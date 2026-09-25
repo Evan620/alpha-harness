@@ -117,12 +117,40 @@ export interface Goal {
   remaining: Record<string, number | null>
 }
 
-export type GoalStep =
-  | { action: 'none'; goal: Goal | null }
-  | { action: 'continue'; prompt: string; goal: Goal }
-  | { action: 'wait'; seconds: number; prompt: string; goal: Goal }
-  | { action: 'await_approval'; goal: Goal }
-  | { action: 'stop'; goal: Goal }
+/** An event from the backend's own goal loop, with its place in the log. */
+export type BusEvent =
+  | (AgentEvent & { seq?: number; auto?: boolean; threadId?: number })
+  | { type: 'turn_start' | 'turn_end'; seq?: number; auto?: boolean; threadId?: number }
+  | {
+      type: 'loop'
+      kind: 'start' | 'continue' | 'wait' | 'await_approval' | 'stop' | 'status'
+      text: string
+      until?: number
+      seq?: number
+      auto?: boolean
+    }
+  | { type: 'goal'; goal: Goal | null; seq?: number; auto?: boolean }
+  | { type: 'ping'; seq?: number; auto?: boolean }
+
+async function follow(
+  since: number,
+  onEvent: (e: BusEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`/api/agent/events?since=${since}`, { signal })
+  if (!response.ok || !response.body) throw new Error(`events ${response.status}`)
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) return
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) if (line.trim()) onEvent(JSON.parse(line) as BusEvent)
+  }
+}
 
 export const agent = {
   goal: () => http.get<{ goal: Goal | null }>('/api/agent/goal'),
@@ -131,9 +159,10 @@ export const agent = {
     done_when: string
     brain_simulations: number
     max_turns: number
+    thread_id: number | null
+    context: PageContext
   }) => http.put<{ goal: Goal }>('/api/agent/goal', body),
-  goalStep: (threadId: number | null) =>
-    http.post<GoalStep>('/api/agent/goal/step', { thread_id: threadId }),
+  events: follow,
   pauseGoal: () => http.post<{ goal: Goal | null }>('/api/agent/goal/pause'),
   resumeGoal: () => http.post<{ goal: Goal | null }>('/api/agent/goal/resume'),
   clearGoal: () => http.del<{ goal: null }>('/api/agent/goal'),

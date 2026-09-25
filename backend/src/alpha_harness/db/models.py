@@ -619,3 +619,26 @@ class ResearchNote(Base):
     #: "vision" or "human", so a claim can be weighed by who made it.
     author: Mapped[str] = mapped_column(String(24), default="vision")
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+
+
+class AgentThread(Base):
+    """One Vision conversation, in the chat-completions shape the model reads.
+
+    Persisted so a backend restart resumes a goal's conversation instead of starting blind.
+    """
+
+    __tablename__ = "agent_thread"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    messages: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)
+
+
+class AgentGoalRow(Base):
+    """The one standing goal, whatever state it is in. A single row, id 1."""
+
+    __tablename__ = "agent_goal"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)

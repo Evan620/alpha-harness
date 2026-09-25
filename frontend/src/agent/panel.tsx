@@ -23,8 +23,8 @@ import {
   type AgentEvent,
   type AgentProposal,
   agent,
+  type BusEvent,
   type Goal,
-  type GoalStep,
   type PageContext,
 } from '@/api/agent'
 import { errorMessage } from '@/api/http'
@@ -152,13 +152,8 @@ export function AgentPanel() {
     threadRef.current = id
     setThreadIdState(id)
   }
-  const waitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const cancelWait = () => {
-    if (waitTimer.current) clearTimeout(waitTimer.current)
-    waitTimer.current = null
-  }
-  // biome-ignore lint/correctness/useExhaustiveDependencies: clear a pending wait on unmount only
-  useEffect(() => cancelWait, [])
+  //: A goal turn the backend is running. The panel only watches it.
+  const [autoBusy, setAutoBusy] = useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -218,7 +213,6 @@ export function AgentPanel() {
         return next
       })
     let wrote = false
-    let finished = false
     try {
       await starter((e) => {
         if (e.type === 'start' || e.type === 'done') setThreadId(e.threadId)
@@ -226,7 +220,6 @@ export function AgentPanel() {
         if (e.type === 'tool_end' && e.status === 'executed') wrote = true
         update((parts) => apply(parts, e))
       }, controller.signal)
-      finished = true
     } catch (error) {
       if (!controller.signal.aborted)
         update((parts) => [...parts, { kind: 'error', text: errorMessage(error) }])
@@ -240,45 +233,12 @@ export function AgentPanel() {
       abort.current = null
       if (wrote) void queryClient.invalidateQueries()
     }
-    if (finished) await afterTurn()
   }
 
   const pushLoop = (kind: LoopKind, text: string, until?: number) =>
     setEntries((prev) => [...prev, { role: 'loop', kind, text, ...(until ? { until } : {}) }])
 
-  /** After every finished turn: ask the server's judge what the goal loop does next. */
-  const afterTurn = async () => {
-    let step: GoalStep
-    try {
-      step = await agent.goalStep(threadRef.current)
-    } catch {
-      return
-    }
-    queryClient.setQueryData(GOAL_KEY, { goal: step.goal })
-    if (step.action === 'none' || !step.goal) return
-    const g = step.goal
-    if (step.action === 'continue') {
-      pushLoop('continue', `Turn ${g.turns + 1} of ${g.maxTurns}. ${g.lastReason}`)
-      void runTurn(step.prompt)
-    } else if (step.action === 'wait') {
-      const until = Date.now() + step.seconds * 1000
-      pushLoop('wait', g.lastReason, until)
-      cancelWait()
-      waitTimer.current = setTimeout(() => {
-        waitTimer.current = null
-        void runTurn(step.prompt)
-      }, step.seconds * 1000)
-    } else if (step.action === 'await_approval') {
-      pushLoop(
-        'await_approval',
-        'Goal paused on the approval card above. Approve or reject to carry on.',
-      )
-    } else {
-      pushLoop('stop', `${statusOf(g.status).label}: ${g.stoppedReason || g.lastReason}`)
-    }
-  }
-
-  /** One turn. Loop turns carry the loop's own prompt and show as a loop line, not a bubble. */
+  /** The person's own turn, streamed straight back over its request. */
   const runTurn = (message: string, shown?: string) => {
     if (shown) setEntries((prev) => [...prev, { role: 'user', text: shown }])
     return run((onEvent, signal) =>
@@ -290,30 +250,75 @@ export function AgentPanel() {
     )
   }
 
-  const startGoal = (g: Goal) => {
-    cancelWait()
-    pushLoop('start', `Goal started: ${g.objective}`)
-    void runTurn(
-      `[Goal set by the person]\nGoal: ${g.objective}\n${g.doneWhen ? `Met when: ${g.doneWhen}\n` : ''}Start working toward it: take the first concrete step.`,
-    )
-  }
+  // Follow what the backend's goal loop does. It runs with or without this tab, so the
+  // panel is a viewer: reopening it replays what happened meanwhile, then carries on live.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one follower per mount
+  useEffect(() => {
+    const stop = new AbortController()
+    let since = -1
+    const onBus = (e: BusEvent) => {
+      since = Math.max(since, e.seq ?? since)
+      if (e.type === 'ping') return
+      if (e.type === 'goal') {
+        queryClient.setQueryData(GOAL_KEY, { goal: e.goal })
+        return
+      }
+      if (e.type === 'loop') {
+        pushLoop(e.kind, e.text, e.until)
+        return
+      }
+      if (!e.auto) return
+      if (e.type === 'turn_start') {
+        if (e.threadId) setThreadId(e.threadId)
+        setAutoBusy(true)
+        setEntries((prev) => [...prev, { role: 'agent', parts: [], live: true }])
+        return
+      }
+      if (e.type === 'turn_end') {
+        setAutoBusy(false)
+        setEntries((prev) =>
+          prev.map((en, i) =>
+            i === prev.length - 1 && en.role === 'agent' ? { ...en, live: false } : en,
+          ),
+        )
+        void queryClient.invalidateQueries()
+        return
+      }
+      if (e.type === 'navigate') void navigate({ to: e.to })
+      setEntries((prev) => {
+        const next = [...prev]
+        for (let i = next.length - 1; i >= 0; i--) {
+          const en = next[i]
+          if (en?.role === 'agent' && en.live) {
+            next[i] = { ...en, parts: apply(en.parts, e as AgentEvent) }
+            break
+          }
+        }
+        return next
+      })
+    }
+    const follow = async () => {
+      while (!stop.signal.aborted) {
+        try {
+          await agent.events(since, onBus, stop.signal)
+        } catch {
+          // dropped: reconnect from where we left off
+        }
+        if (!stop.signal.aborted) await new Promise((r) => setTimeout(r, 2000))
+      }
+    }
+    void follow()
+    return () => stop.abort()
+  }, [])
 
   const pauseGoal = async () => {
-    cancelWait()
-    abort.current?.abort()
     const res = await agent.pauseGoal().catch(() => null)
     if (res) queryClient.setQueryData(GOAL_KEY, res)
-    pushLoop('stop', 'Paused. Carry on with /goal resume, or /goal clear to drop it.')
   }
 
   const resumeGoal = async () => {
     const res = await agent.resumeGoal().catch(() => null)
-    if (!res?.goal) return
-    queryClient.setQueryData(GOAL_KEY, res)
-    pushLoop('start', 'Goal resumed.')
-    void runTurn(
-      `[Resuming your goal]\nGoal: ${res.goal.objective}\nPick up where you left off: take the next concrete step.`,
-    )
+    if (!res?.goal) pushLoop('status', 'No goal to resume. Start one with /goal <condition>.')
   }
 
   /** `/goal` alone: where the goal stands, as a line in the conversation. */
@@ -336,11 +341,8 @@ export function AgentPanel() {
   }
 
   const clearGoal = async () => {
-    cancelWait()
-    abort.current?.abort()
     await agent.clearGoal().catch(() => null)
     queryClient.setQueryData(GOAL_KEY, { goal: null })
-    pushLoop('stop', 'Goal cleared.')
   }
 
   /** `/goal <condition>`, with optional turns=N and sims=N anywhere in it. */
@@ -368,9 +370,13 @@ export function AgentPanel() {
         done_when: '',
         brain_simulations: sims,
         max_turns: turns,
+        thread_id: threadRef.current,
+        context: readContext(pathname),
       })
       queryClient.setQueryData(GOAL_KEY, res)
-      startGoal(res.goal)
+      // Carry on in the goal's conversation straight away, so a message sent before the
+      // first goal turn is announced still lands in the right place.
+      if (res.goal.threadId) setThreadId(res.goal.threadId)
     } catch (error) {
       pushLoop('stop', `Could not set the goal: ${errorMessage(error)}`)
     }
@@ -411,7 +417,7 @@ export function AgentPanel() {
       setThreadId(null)
       return
     }
-    cancelWait()
+    // A goal turn in progress is pre-empted by the backend; the loop judges again after.
     void runTurn(trimmed, trimmed)
   }
 
@@ -661,7 +667,7 @@ export function AgentPanel() {
           placeholder="Ask Vision, or /goal <what to achieve>"
           className="min-h-0 flex-1 resize-none py-2"
         />
-        {busy ? (
+        {busy || autoBusy ? (
           <Button
             type="button"
             variant="secondary"

@@ -26,12 +26,14 @@ if TYPE_CHECKING:
 
 from ..llm.providers import get as provider_spec
 from ..llm.registry import DEEP_MODEL
-from . import actions, guide
+from . import actions, guide, store
 from .approval import ApprovalError, ApprovalGate
+from .bus import EventBus
 from .doctrine import DOCTRINE
 from .goals import Goal, GoalBook
 from .permissions import Permissions
 from .registry import AgentContext, UnknownCapability
+from .runner import GoalRunner
 
 log = structlog.get_logger(__name__)
 
@@ -248,20 +250,107 @@ class AgentService:
         self.permissions = Permissions(state.settings.data_dir / "vision.json")
         self.threads: dict[int, Thread] = {}
         self._ids = itertools.count(1)
+        #: One turn at a time, whether the person or the goal runner started it.
+        self.turn_lock = asyncio.Lock()
+        self.bus = EventBus()
+        self.runner = GoalRunner(self)
+        state.hub.listen(self.runner.on_hub)
+        self._loaded = False
+
+    async def load(self) -> None:
+        """Bring back saved conversations and the goal. A running goal returns paused."""
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            for thread_id, messages in (await store.load_threads(self.state.db)).items():
+                self.threads[thread_id] = Thread(id=thread_id, messages=messages)
+            goal = await store.load_goal(self.state.db)
+        except Exception:
+            log.warning("agent.restore_failed", exc_info=True)
+            return
+        if self.threads:
+            self._ids = itertools.count(max(self.threads) + 1)
+        if goal is not None:
+            self.goals.set(goal)
+
+    async def persist(self, thread: Thread | None = None) -> None:
+        try:
+            if thread is not None:
+                await store.save_thread(self.state.db, thread.id, thread.messages)
+            await store.save_goal(self.state.db, self.goals.goal)
+        except Exception:
+            log.warning("agent.persist_failed", exc_info=True)
+
+    def _after_interruption(self, in_goal: bool) -> None:
+        """A turn the person started stopped the goal loop so they got an answer at once.
+        Put the loop back. In the goal's own conversation their turn may have moved the goal,
+        so judge it first; anywhere else the loop's cut-off step simply resumes."""
+        goal = self.goals.goal
+        if goal is None or not goal.running:
+            return
+        if in_goal:
+            self.runner.start(judge_first=True)
+        else:
+            self.runner.start(self.runner.prompt_for("resume"))
+
+    def thread_for_goal(self) -> Thread:
+        goal = self.goals.goal
+        thread = self._thread(goal.thread_id if goal else None)
+        if goal is not None:
+            goal.thread_id = thread.id
+        return thread
+
+    async def run_turn(self, thread: Thread, text: str, *, auto: bool = False) -> None:
+        """A turn nobody is streaming: published on the bus for any panel following it."""
+        goal = self.goals.goal
+        context = dict(goal.context) if goal else {}
+        self.bus.publish({"type": "turn_start", "threadId": thread.id, "auto": auto})
+        try:
+            async for event in self._locked_turn(thread, text, context):
+                self.bus.publish({**event, "threadId": thread.id, "auto": auto})
+        finally:
+            self.bus.publish({"type": "turn_end", "threadId": thread.id, "auto": auto})
+            await self.persist(thread)
+
+    async def _locked_turn(
+        self, thread: Thread, text: str, context: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        async with self.turn_lock:
+            repair(thread)
+            thread.messages.append({"role": "user", "content": text})
+            try:
+                async for event in self._run(thread, context):
+                    yield event
+            finally:
+                repair(thread)
 
     # -- public ----------------------------------------------------------
 
     async def turn(
         self, thread_id: int | None, text: str, context: dict[str, Any]
     ) -> AsyncIterator[dict[str, Any]]:
+        """The person's own message. It pre-empts a goal step in progress, and the goal loop
+        judges again afterwards, since what they said may be what completes it."""
+        await self.load()
+        await self.runner.stop()
         thread = self._thread(thread_id)
-        thread.messages.append({"role": "user", "content": text})
-        async for event in self._run(thread, context):
-            yield event
+        goal = self.goals.goal
+        in_goal = goal is not None and goal.thread_id == thread.id
+        if in_goal and context.get("pathname"):
+            goal.context = dict(context)
+        try:
+            async for event in self._locked_turn(thread, text, context):
+                yield event
+        finally:
+            await self.persist(thread)
+        self._after_interruption(in_goal)
 
     async def decide(
         self, proposal_id: str, payload_hash: str | None, approve: bool, context: dict[str, Any]
     ) -> AsyncIterator[dict[str, Any]]:
+        await self.load()
+        await self.runner.stop()
         proposal = next((p for p in self.gate.pending() if p.id == proposal_id), None)
         thread = self._thread(proposal.thread_id if proposal else None)
         try:
@@ -289,9 +378,15 @@ class AgentService:
         except ApprovalError as exc:
             yield {"type": "error", "message": str(exc)}
             return
-        thread.messages.append({"role": "user", "content": note + " Report the outcome briefly."})
-        async for event in self._run(thread, context):
-            yield event
+        try:
+            async for event in self._locked_turn(
+                thread, note + " Report the outcome briefly.", context
+            ):
+                yield event
+        finally:
+            await self.persist(thread)
+        goal = self.goals.goal
+        self._after_interruption(goal is not None and goal.thread_id == thread.id)
 
     def catalog(self) -> list[dict[str, Any]]:
         return list(self.index.values())
@@ -575,6 +670,24 @@ async def _stream_once(
                     if fn.get("arguments"):
                         slot["function"]["arguments"] += fn["arguments"]
     state.update(content=content, calls=calls, tokens=tokens)
+
+
+def repair(thread: Thread) -> None:
+    """Drop a trailing assistant tool call whose results never arrived.
+
+    A turn cancelled mid-tool (the person pre-empting, /goal pause) leaves the call without
+    its answers, and chat-completions APIs reject that shape on the next request.
+    """
+    messages = thread.messages
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") != "assistant" or not message.get("tool_calls"):
+            continue
+        wanted = {c.get("id") for c in message["tool_calls"]}
+        answered = {m.get("tool_call_id") for m in messages[index + 1 :] if m.get("role") == "tool"}
+        if not wanted <= answered:
+            del messages[index:]
+        return
 
 
 def _http_status(result: Any) -> int | None:

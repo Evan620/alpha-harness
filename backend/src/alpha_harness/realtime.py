@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from fastapi import WebSocket
 
 log = structlog.get_logger(__name__)
@@ -35,6 +37,13 @@ class Hub:
         #: Last message per topic, replayed to a client on connect so a freshly opened
         #: tab shows current state immediately instead of waiting for the next change.
         self._latest: dict[str, dict[str, Any]] = {}
+        #: In-process listeners (Vision's goal runner), told of every broadcast so work
+        #: finishing can wake an agent instead of it polling on a timer.
+        self._listeners: list[Callable[[str, Any], None]] = []
+
+    def listen(self, listener: Callable[[str, Any], None]) -> None:
+        """Call ``listener(topic, payload)`` on every broadcast. It must not block."""
+        self._listeners.append(listener)
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -56,6 +65,11 @@ class Hub:
         keeps a side-channel message from replacing the snapshot new clients get on connect.
         """
         message = {"topic": topic, "payload": payload}
+        for listener in list(self._listeners):
+            try:
+                listener(topic, payload)
+            except Exception:  # a listener must never break the engine's broadcast
+                log.warning("hub.listener_failed", exc_info=True)
         if replay:
             self._latest[topic] = message
         text = json.dumps(message, default=str)

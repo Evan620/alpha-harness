@@ -97,41 +97,46 @@ def _transcript(thread: Thread) -> str:
     return text[-TRANSCRIPT_CHARS:]
 
 
-async def _running_work(service: AgentService) -> str:
-    """What is in flight, read the way the UI reads it. The judge needs this to choose WAIT."""
-    lines: list[str] = []
+LIVE_STATUSES = {"running", "queued", "pending", "active", "waiting"}
+
+
+async def work_in_flight(service: AgentService) -> tuple[int, list[str]]:
+    """Simulations in flight, and the names of lab tasks still running, read the way the UI
+    reads them. The judge uses this to choose WAIT; the runner uses it to know a WAIT is over."""
+    sims, tasks = 0, []
     transport = httpx.ASGITransport(app=service.app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://127.0.0.1", timeout=15.0
     ) as client:
-        for path, label in (
-            ("/api/simulations/active", "simulations in flight"),
-            ("/api/lab-tasks", "lab tasks"),
-        ):
-            try:
-                body = (await client.get(path)).json()
-            except httpx.HTTPError, ValueError:
-                continue
-            rows = (
-                body if isinstance(body, list) else (body.get("items") or body.get("tasks") or [])
+        try:
+            body = (await client.get("/api/simulations/active")).json()
+            sims = len(body) if isinstance(body, list) else int(body.get("count") or 0)
+        except httpx.HTTPError, ValueError, AttributeError:
+            pass
+        try:
+            body = (await client.get("/api/lab-tasks")).json()
+            rows = body.get("tasks") if isinstance(body, dict) else body
+            tasks.extend(
+                str(row.get("labName") or row.get("name") or row.get("id"))
+                for row in rows or []
+                if isinstance(row, dict) and str(row.get("status", "")).lower() in LIVE_STATUSES
             )
-            if not isinstance(rows, list):
-                continue
-            live = [
-                r
-                for r in rows
-                if isinstance(r, dict)
-                and str(r.get("status", "")).lower()
-                in {"running", "queued", "pending", "active", "waiting"}
-            ]
-            if path.endswith("active"):
-                lines.append(f"{label}: {len(rows)}")
-            elif live:
-                names = ", ".join(
-                    str(r.get("labName") or r.get("name") or r.get("id")) for r in live[:6]
-                )
-                lines.append(f"{label} running: {len(live)} ({names})")
-    return "\n".join(lines) or "nothing running"
+        except httpx.HTTPError, ValueError, AttributeError:
+            pass
+    return sims, tasks
+
+
+async def busy(service: AgentService) -> bool:
+    sims, tasks = await work_in_flight(service)
+    return bool(sims or tasks)
+
+
+async def _running_work(service: AgentService) -> str:
+    sims, tasks = await work_in_flight(service)
+    lines = [f"simulations in flight: {sims}"]
+    if tasks:
+        lines.append(f"lab tasks running: {len(tasks)} ({', '.join(tasks[:6])})")
+    return "\n".join(lines) if (sims or tasks) else "nothing running"
 
 
 def _parse(raw: str) -> dict[str, Any] | None:
