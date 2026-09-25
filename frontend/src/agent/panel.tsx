@@ -31,7 +31,7 @@ import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { NAV } from '@/shell/nav'
 import { Badge, Button, Textarea } from '@/ui/kit'
-import { GOAL_KEY, GoalCard, GoalChip, statusOf } from './goal'
+import { budgetLine, GOAL_KEY, GoalChip, statusOf } from './goal'
 import { Markdown } from './markdown'
 import { ModeChip, PermissionsCard } from './permissions'
 import { useVision } from './store'
@@ -60,13 +60,16 @@ type Entry =
   | { role: 'user'; text: string }
   | { role: 'agent'; parts: Part[]; live: boolean }
   | { role: 'permissions' }
-  | { role: 'goal' }
   | { role: 'loop'; kind: LoopKind; text: string; until?: number }
 
-type LoopKind = 'start' | 'continue' | 'wait' | 'await_approval' | 'stop'
+type LoopKind = 'start' | 'continue' | 'wait' | 'await_approval' | 'stop' | 'status'
 
 const COMMANDS = [
-  { name: '/goal', hint: 'Set what Vision works toward, and the most it may spend' },
+  {
+    name: '/goal',
+    hint: '<condition> to start, or clear, pause, resume. Alone shows status',
+    args: true,
+  },
   { name: '/permissions', hint: 'Ask first or Auto: whether Vision asks before acting' },
   { name: '/new', hint: 'Start a new conversation' },
   { name: '/clear', hint: 'Clear this conversation' },
@@ -300,7 +303,7 @@ export function AgentPanel() {
     abort.current?.abort()
     const res = await agent.pauseGoal().catch(() => null)
     if (res) queryClient.setQueryData(GOAL_KEY, res)
-    pushLoop('stop', 'Paused. Resume from the goal card or /goal.')
+    pushLoop('stop', 'Paused. Carry on with /goal resume, or /goal clear to drop it.')
   }
 
   const resumeGoal = async () => {
@@ -313,8 +316,77 @@ export function AgentPanel() {
     )
   }
 
-  const showGoal = () => {
-    setEntries((prev) => [...prev.filter((e) => e.role !== 'goal'), { role: 'goal' }])
+  /** `/goal` alone: where the goal stands, as a line in the conversation. */
+  const showGoal = async () => {
+    const res = await agent.goal().catch(() => null)
+    const g = res?.goal
+    if (!g) {
+      pushLoop(
+        'status',
+        'No goal set. Start one with /goal <condition>, e.g. /goal find 2 EUR/D1 alphas that pass every check turns=10 sims=500',
+      )
+      return
+    }
+    queryClient.setQueryData(GOAL_KEY, res)
+    const judge = g.lastReason ? ` Judge: ${g.lastReason}` : ''
+    pushLoop(
+      'status',
+      `${statusOf(g.status).label}, turn ${g.turns} of ${g.maxTurns}, ${budgetLine(g)}. Goal: ${g.objective}.${judge}`,
+    )
+  }
+
+  const clearGoal = async () => {
+    cancelWait()
+    abort.current?.abort()
+    await agent.clearGoal().catch(() => null)
+    queryClient.setQueryData(GOAL_KEY, { goal: null })
+    pushLoop('stop', 'Goal cleared.')
+  }
+
+  /** `/goal <condition>`, with optional turns=N and sims=N anywhere in it. */
+  const setGoal = async (text: string) => {
+    let turns = 20
+    let sims = 0
+    const objective = text
+      .replace(/\b(turns|sims|simulations)\s*=\s*(\d+)/gi, (_m, key: string, value: string) => {
+        if (key.toLowerCase() === 'turns') turns = Math.min(100, Math.max(1, Number(value)))
+        else sims = Math.min(5000, Number(value))
+        return ''
+      })
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+    if (objective.length < 3) {
+      pushLoop(
+        'status',
+        'Say what the goal is, e.g. /goal find 2 EUR/D1 alphas that pass every check',
+      )
+      return
+    }
+    try {
+      const res = await agent.setGoal({
+        objective,
+        done_when: '',
+        brain_simulations: sims,
+        max_turns: turns,
+      })
+      queryClient.setQueryData(GOAL_KEY, res)
+      startGoal(res.goal)
+    } catch (error) {
+      pushLoop('stop', `Could not set the goal: ${errorMessage(error)}`)
+    }
+  }
+
+  const goalCommand = (arg: string) => {
+    const word = arg.trim().toLowerCase()
+    if (!word) return void showGoal()
+    if (['clear', 'stop', 'off', 'reset', 'none', 'cancel'].includes(word)) return void clearGoal()
+    if (word === 'pause') return void pauseGoal()
+    if (word === 'resume') return void resumeGoal()
+    if (busy) {
+      pushLoop('status', 'Vision is mid-turn. Stop it first, or wait for this turn to finish.')
+      return
+    }
+    void setGoal(arg.trim())
   }
 
   const showPermissions = () => {
@@ -323,11 +395,17 @@ export function AgentPanel() {
 
   const send = (message: string) => {
     const trimmed = message.trim()
-    if (!trimmed || busy) return
+    if (!trimmed) return
+    // /goal works mid-turn too: clearing or pausing a running loop is the point of it.
+    const goal = /^\/goal(?:\s+([\s\S]*))?$/i.exec(trimmed)
+    if (goal) {
+      setText('')
+      return goalCommand(goal[1] ?? '')
+    }
+    if (busy) return
     setText('')
     // Slash commands are handled here and never reach the model.
     if (trimmed === '/permissions') return showPermissions()
-    if (trimmed === '/goal') return showGoal()
     if (trimmed === '/new' || trimmed === '/clear') {
       setEntries([])
       setThreadId(null)
@@ -369,6 +447,15 @@ export function AgentPanel() {
     )
   }
 
+  const choose = (c: (typeof COMMANDS)[number]) => {
+    if ('args' in c && c.args) {
+      setText(`${c.name} `)
+      requestAnimationFrame(() =>
+        document.querySelector<HTMLTextAreaElement>('aside[aria-label=Vision] textarea')?.focus(),
+      )
+    } else send(c.name)
+  }
+
   // Slash commands: the menu opens on "/" and filters as you type.
   const slash = /^\/\S*$/.test(text) ? text.toLowerCase() : null
   const menu = slash ? COMMANDS.filter((c) => c.name.startsWith(slash)) : []
@@ -404,7 +491,7 @@ export function AgentPanel() {
           <div className="text-body font-medium text-ink">Vision</div>
           <div className="truncate text-[11px] text-ink-subtle">Sees {pathname}</div>
         </div>
-        <GoalChip onClick={showGoal} />
+        <GoalChip onClick={() => void showGoal()} />
         <ModeChip onClick={showPermissions} />
         <Button
           variant="ghost"
@@ -464,15 +551,7 @@ export function AgentPanel() {
               </div>
             )}
             {entries.map((entry, i) =>
-              entry.role === 'goal' ? (
-                <GoalCard
-                  key={i}
-                  onStart={startGoal}
-                  onPause={() => void pauseGoal()}
-                  onResume={() => void resumeGoal()}
-                  onDone={() => setEntries((prev) => prev.filter((e) => e.role !== 'goal'))}
-                />
-              ) : entry.role === 'loop' ? (
+              entry.role === 'loop' ? (
                 <LoopLine key={i} kind={entry.kind} text={entry.text} until={entry.until} />
               ) : entry.role === 'permissions' ? (
                 <PermissionsCard
@@ -531,7 +610,7 @@ export function AgentPanel() {
                 onMouseEnter={() => setPick(i)}
                 onMouseDown={(e) => {
                   e.preventDefault()
-                  send(c.name)
+                  choose(c)
                 }}
                 className={cn(
                   'flex w-full items-baseline gap-3 px-3 py-1.5 text-left',
@@ -561,7 +640,10 @@ export function AgentPanel() {
               if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
                 e.preventDefault()
                 const chosen = menu[pickIndex]
-                if (chosen) send(chosen.name)
+                // Enter on an exact name runs it (bare /goal shows status); otherwise complete.
+                if (chosen && e.key === 'Enter' && text.trim().toLowerCase() === chosen.name)
+                  send(chosen.name)
+                else if (chosen) choose(chosen)
                 return
               }
               if (e.key === 'Escape') {
@@ -576,7 +658,7 @@ export function AgentPanel() {
             }
           }}
           rows={2}
-          placeholder="Ask Vision, or tell it what to do…"
+          placeholder="Ask Vision, or /goal <what to achieve>"
           className="min-h-0 flex-1 resize-none py-2"
         />
         {busy ? (
@@ -795,6 +877,7 @@ function Proposal({
 }
 
 const LOOP_TONE: Record<LoopKind, string> = {
+  status: 'text-ink-muted',
   start: 'text-primary',
   continue: 'text-ink-subtle',
   wait: 'text-status-warning',
