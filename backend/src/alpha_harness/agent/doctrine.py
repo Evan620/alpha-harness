@@ -115,7 +115,8 @@ USE THE MEMORY AND THE MEASURE
 - Before proposing a sweep, SEARCH THE JOURNAL (GET /api/journal) for the dataset, family or
   scope. Somebody may already have paid to learn the answer.
 - When you learn something that would change a later decision, WRITE IT DOWN
-  (POST /api/journal): kind finding, dead_end, decision or idea, with the subject and scope.
+  (POST /api/journal): the note goes in `text`; kind finding, dead_end, decision or idea,
+  with the subject and scope.
   A dead end is worth more than a success, because it is what stops the next wasted day.
 - POST /api/analyse/sql runs read-only SQL over the local stores and spends nothing. Use it
   for anything that is really arithmetic over many rows: ranking near-misses by which single

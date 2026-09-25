@@ -14,7 +14,7 @@ from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy import delete, or_, select
 
 from ..db.models import ResearchNote
@@ -29,7 +29,14 @@ Kind = Literal["finding", "dead_end", "decision", "idea"]
 
 
 class NoteRequest(BaseModel):
-    body: str = Field(min_length=1, max_length=4_000, description="What was learned, plainly")
+    # Called `text` because an agent's request already has a `body` (the JSON it sends), and
+    # a note field of the same name was twice sent nested inside itself. `body` still works.
+    text: str = Field(
+        min_length=1,
+        max_length=4_000,
+        validation_alias=AliasChoices("text", "body", "note"),
+        description="What was learned, plainly",
+    )
     kind: Kind = Field(default="finding", description="finding | dead_end | decision | idea")
     subject: str = Field(default="", max_length=128, description="Dataset, alpha, family or scope")
     scope: str = Field(default="", max_length=48, description="e.g. USA/1/TOP3000")
@@ -68,7 +75,7 @@ async def write(payload: NoteRequest, state: State) -> Note:
         kind=payload.kind,
         subject=payload.subject.strip(),
         scope=payload.scope.strip(),
-        body=payload.body.strip(),
+        body=payload.text.strip(),
         tags=payload.tags,
         author=payload.author,
     )
