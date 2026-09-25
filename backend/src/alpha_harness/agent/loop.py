@@ -129,26 +129,35 @@ TOOLS: list[dict[str, Any]] = [
 
 
 BRAIN_ALPHA = "https://platform.worldquantbrain.com/alpha/"
+#: The rest of the app reaches Gemini through Google's SDK, so its provider has no base URL.
+#: Vision speaks chat-completions, which Google also serves here with the same key.
+GOOGLE_OPENAI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 
 def _goal_rules(goal: Goal | None) -> str:
     if goal is None:
         return (
             "NO GOAL IS SET. You are answering one question at a time. If the person describes"
-            " something that would take several steps and a budget, say they can set it as a"
-            " goal with /goal, which also caps what you may spend on it."
+            " something that needs several steps, say they can set it with /goal: you will then"
+            " keep working turn after turn until it is met, within a budget they choose."
         )
     left = goal.remaining("brain_simulations")
     budget = (
         "no simulation ceiling"
         if left is None
-        else f"{left} simulations left of {goal.brain_simulations}"
+        else f"{left} of {goal.brain_simulations} simulations left"
     )
+    done = f"\nIt is met when: {goal.done_when}" if goal.done_when else ""
     return (
-        f"THE GOAL (the person set it; you cannot change it): {goal.objective}\n"
-        f"Budget: {budget}. Status: {goal.status}. Work toward this goal, say how each step"
-        " serves it, and stop and report when it is met or the budget runs out. The gate"
-        " enforces the budget, so an action beyond it is refused rather than trimmed."
+        f"THE GOAL (the person set it; you cannot change it): {goal.objective}{done}\n"
+        f"Status {goal.status}, turn {goal.turns + 1} of {goal.max_turns}, {budget}.\n"
+        "You are in a goal loop: after this turn a separate judge reads what you showed and"
+        " decides whether to continue, wait for running work, or stop. So each turn, take ONE"
+        " concrete step toward the goal with a tool and report what it returned. The judge"
+        " only accepts evidence: when you believe the goal is met, show the alpha ids with"
+        " links and their check results, not a claim. If you need the person (an approval,"
+        " a choice, a key), say exactly what and stop. The gate enforces the budget, so an"
+        " action beyond it is refused rather than trimmed."
     )
 
 
@@ -224,6 +233,8 @@ class Thread:
     id: int
     messages: list[dict[str, Any]] = field(default_factory=list)
     updated: float = field(default_factory=time.time)
+    #: Actions (call_action) the last turn took. The goal loop reads this for stagnation.
+    last_actions: int = 0
 
 
 class AgentService:
@@ -301,6 +312,10 @@ class AgentService:
             "goalRules": _goal_rules(self.goals.goal),
         }
         yield {"type": "start", "threadId": thread.id, "mode": self.permissions.mode}
+        thread.last_actions = 0
+        goal = self.goals.goal
+        if goal is not None and goal.status == "waiting":
+            goal.status = "active"  # a turn is running again, so the wait is over
         try:
             for _ in range(MAX_ROUNDS):
                 message: dict[str, Any] = {}
@@ -321,6 +336,8 @@ class AgentService:
                     except ValueError:
                         args = {}
                     call_id = call.get("id", "")
+                    if name == "call_action":
+                        thread.last_actions += 1
                     yield {
                         "type": "tool_start",
                         "id": call_id,
@@ -473,7 +490,10 @@ class AgentService:
         }
         if tools:
             payload["tools"] = TOOLS
-        url = f"{spec.base_url.rstrip('/')}/chat/completions"
+        base = spec.base_url or (GOOGLE_OPENAI_BASE if info.provider == "google" else "")
+        if not base:
+            raise RuntimeError(f"{info.provider} has no chat-completions endpoint for Vision.")
+        url = f"{base.rstrip('/')}/chat/completions"
         state: dict[str, Any] = {}
         # Z.AI's own rate limit is the only one left: wait it out rather than fail the turn.
         for attempt in range(6):

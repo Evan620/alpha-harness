@@ -79,7 +79,7 @@ export function Budget() {
         if (r.model.rpd <= 0) {
           return (
             <span className="text-body-compact text-ink-muted">
-              No daily cap · {fmt.int(r.requests)} used
+              No daily cap, {fmt.int(r.requests)} used
             </span>
           )
         }

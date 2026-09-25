@@ -15,15 +15,23 @@ import {
   LoaderCircleIcon,
   SendIcon,
   SquareIcon,
+  TargetIcon,
   XIcon,
 } from 'lucide-react'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
-import { type AgentEvent, type AgentProposal, agent, type PageContext } from '@/api/agent'
+import {
+  type AgentEvent,
+  type AgentProposal,
+  agent,
+  type Goal,
+  type GoalStep,
+  type PageContext,
+} from '@/api/agent'
 import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { NAV } from '@/shell/nav'
 import { Badge, Button, Textarea } from '@/ui/kit'
-import { GoalCard, GoalChip } from './goal'
+import { GOAL_KEY, GoalCard, GoalChip, statusOf } from './goal'
 import { Markdown } from './markdown'
 import { ModeChip, PermissionsCard } from './permissions'
 import { useVision } from './store'
@@ -53,6 +61,9 @@ type Entry =
   | { role: 'agent'; parts: Part[]; live: boolean }
   | { role: 'permissions' }
   | { role: 'goal' }
+  | { role: 'loop'; kind: LoopKind; text: string; until?: number }
+
+type LoopKind = 'start' | 'continue' | 'wait' | 'await_approval' | 'stop'
 
 const COMMANDS = [
   { name: '/goal', hint: 'Set what Vision works toward, and the most it may spend' },
@@ -132,7 +143,19 @@ export function AgentPanel() {
   const [text, setText] = useState('')
   const [pick, setPick] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [threadId, setThreadId] = useState<number | null>(null)
+  const [, setThreadIdState] = useState<number | null>(null)
+  const threadRef = useRef<number | null>(null)
+  const setThreadId = (id: number | null) => {
+    threadRef.current = id
+    setThreadIdState(id)
+  }
+  const waitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelWait = () => {
+    if (waitTimer.current) clearTimeout(waitTimer.current)
+    waitTimer.current = null
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clear a pending wait on unmount only
+  useEffect(() => cancelWait, [])
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -192,6 +215,7 @@ export function AgentPanel() {
         return next
       })
     let wrote = false
+    let finished = false
     try {
       await starter((e) => {
         if (e.type === 'start' || e.type === 'done') setThreadId(e.threadId)
@@ -199,6 +223,7 @@ export function AgentPanel() {
         if (e.type === 'tool_end' && e.status === 'executed') wrote = true
         update((parts) => apply(parts, e))
       }, controller.signal)
+      finished = true
     } catch (error) {
       if (!controller.signal.aborted)
         update((parts) => [...parts, { kind: 'error', text: errorMessage(error) }])
@@ -212,6 +237,80 @@ export function AgentPanel() {
       abort.current = null
       if (wrote) void queryClient.invalidateQueries()
     }
+    if (finished) await afterTurn()
+  }
+
+  const pushLoop = (kind: LoopKind, text: string, until?: number) =>
+    setEntries((prev) => [...prev, { role: 'loop', kind, text, ...(until ? { until } : {}) }])
+
+  /** After every finished turn: ask the server's judge what the goal loop does next. */
+  const afterTurn = async () => {
+    let step: GoalStep
+    try {
+      step = await agent.goalStep(threadRef.current)
+    } catch {
+      return
+    }
+    queryClient.setQueryData(GOAL_KEY, { goal: step.goal })
+    if (step.action === 'none' || !step.goal) return
+    const g = step.goal
+    if (step.action === 'continue') {
+      pushLoop('continue', `Turn ${g.turns + 1} of ${g.maxTurns}. ${g.lastReason}`)
+      void runTurn(step.prompt)
+    } else if (step.action === 'wait') {
+      const until = Date.now() + step.seconds * 1000
+      pushLoop('wait', g.lastReason, until)
+      cancelWait()
+      waitTimer.current = setTimeout(() => {
+        waitTimer.current = null
+        void runTurn(step.prompt)
+      }, step.seconds * 1000)
+    } else if (step.action === 'await_approval') {
+      pushLoop(
+        'await_approval',
+        'Goal paused on the approval card above. Approve or reject to carry on.',
+      )
+    } else {
+      pushLoop('stop', `${statusOf(g.status).label}: ${g.stoppedReason || g.lastReason}`)
+    }
+  }
+
+  /** One turn. Loop turns carry the loop's own prompt and show as a loop line, not a bubble. */
+  const runTurn = (message: string, shown?: string) => {
+    if (shown) setEntries((prev) => [...prev, { role: 'user', text: shown }])
+    return run((onEvent, signal) =>
+      agent.turn(
+        { text: message, thread_id: threadRef.current, context: readContext(pathname) },
+        onEvent,
+        signal,
+      ),
+    )
+  }
+
+  const startGoal = (g: Goal) => {
+    cancelWait()
+    pushLoop('start', `Goal started: ${g.objective}`)
+    void runTurn(
+      `[Goal set by the person]\nGoal: ${g.objective}\n${g.doneWhen ? `Met when: ${g.doneWhen}\n` : ''}Start working toward it: take the first concrete step.`,
+    )
+  }
+
+  const pauseGoal = async () => {
+    cancelWait()
+    abort.current?.abort()
+    const res = await agent.pauseGoal().catch(() => null)
+    if (res) queryClient.setQueryData(GOAL_KEY, res)
+    pushLoop('stop', 'Paused. Resume from the goal card or /goal.')
+  }
+
+  const resumeGoal = async () => {
+    const res = await agent.resumeGoal().catch(() => null)
+    if (!res?.goal) return
+    queryClient.setQueryData(GOAL_KEY, res)
+    pushLoop('start', 'Goal resumed.')
+    void runTurn(
+      `[Resuming your goal]\nGoal: ${res.goal.objective}\nPick up where you left off: take the next concrete step.`,
+    )
   }
 
   const showGoal = () => {
@@ -234,14 +333,8 @@ export function AgentPanel() {
       setThreadId(null)
       return
     }
-    setEntries((prev) => [...prev, { role: 'user', text: trimmed }])
-    void run((onEvent, signal) =>
-      agent.turn(
-        { text: trimmed, thread_id: threadId, context: readContext(pathname) },
-        onEvent,
-        signal,
-      ),
-    )
+    cancelWait()
+    void runTurn(trimmed, trimmed)
   }
 
   const decide = (proposal: AgentProposal, approve: boolean) => {
@@ -374,8 +467,13 @@ export function AgentPanel() {
               entry.role === 'goal' ? (
                 <GoalCard
                   key={i}
+                  onStart={startGoal}
+                  onPause={() => void pauseGoal()}
+                  onResume={() => void resumeGoal()}
                   onDone={() => setEntries((prev) => prev.filter((e) => e.role !== 'goal'))}
                 />
+              ) : entry.role === 'loop' ? (
+                <LoopLine key={i} kind={entry.kind} text={entry.text} until={entry.until} />
               ) : entry.role === 'permissions' ? (
                 <PermissionsCard
                   key={i}
@@ -487,7 +585,12 @@ export function AgentPanel() {
             variant="secondary"
             size="icon"
             aria-label="Stop"
-            onClick={() => abort.current?.abort()}
+            onClick={() => {
+              const running = queryClient.getQueryData<{ goal: Goal | null }>(GOAL_KEY)?.goal
+                ?.running
+              if (running) void pauseGoal()
+              else abort.current?.abort()
+            }}
           >
             <SquareIcon />
           </Button>
@@ -687,6 +790,52 @@ function Proposal({
           </Button>
         </div>
       )}
+    </div>
+  )
+}
+
+const LOOP_TONE: Record<LoopKind, string> = {
+  start: 'text-primary',
+  continue: 'text-ink-subtle',
+  wait: 'text-status-warning',
+  await_approval: 'text-status-warning',
+  stop: 'text-ink',
+}
+
+/** One line of the goal loop between turns: what the judge decided and why. */
+function LoopLine({
+  kind,
+  text,
+  until,
+}: {
+  kind: LoopKind
+  text: string
+  until?: number | undefined
+}) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!until) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [until])
+  const left = until ? Math.max(0, Math.round((until - now) / 1000)) : 0
+  const Icon = kind === 'wait' ? LoaderCircleIcon : kind === 'stop' ? SquareIcon : TargetIcon
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-2 border-l-2 border-hairline pl-2 text-[12px]',
+        LOOP_TONE[kind],
+      )}
+    >
+      <Icon
+        className={cn('mt-0.5 size-3.5 shrink-0', kind === 'wait' && left > 0 && 'animate-spin')}
+      />
+      <span className="min-w-0">
+        {kind === 'wait' && (
+          <span className="num mr-1">{left > 0 ? `Waiting ${left}s.` : 'Checking back in.'}</span>
+        )}
+        {text}
+      </span>
     </div>
   )
 }

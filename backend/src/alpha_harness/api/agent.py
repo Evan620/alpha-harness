@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..agent import judge
 from ..agent.goals import Goal
 from ..agent.loop import AgentService
 
@@ -86,6 +87,8 @@ class GoalRequest(BaseModel):
     """What to pursue, and the most it may cost. 0 on a budget means no ceiling."""
 
     objective: str = Field(min_length=3, max_length=600)
+    done_when: str = Field(default="", max_length=600, description="How to tell it is met")
+    max_turns: int = Field(default=20, ge=1, le=100)
     brain_simulations: int = Field(default=0, ge=0, le=5_000)
     llm_requests: int = Field(default=0, ge=0, le=5_000)
     correlation_jobs: int = Field(default=0, ge=0, le=500)
@@ -103,12 +106,46 @@ async def set_goal(payload: GoalRequest, request: Request) -> dict[str, Any]:
     goal = _service(request).goals.set(
         Goal(
             objective=payload.objective.strip(),
+            done_when=payload.done_when.strip(),
+            max_turns=payload.max_turns,
             brain_simulations=payload.brain_simulations,
             llm_requests=payload.llm_requests,
             correlation_jobs=payload.correlation_jobs,
         )
     )
     return {"goal": goal.to_dict()}
+
+
+class StepRequest(BaseModel):
+    thread_id: int | None = None
+
+
+@router.post("/goal/step")
+async def goal_step(payload: StepRequest, request: Request) -> dict[str, Any]:
+    """After a turn: the judge's verdict and what the panel does next. Decided here, not in
+    the browser, so the turn cap, the budget and stagnation cannot be talked past."""
+    return await judge.step(_service(request), payload.thread_id)
+
+
+@router.post("/goal/pause")
+async def pause_goal(request: Request) -> dict[str, Any]:
+    goal = _service(request).goals.goal
+    if goal is not None and goal.running:
+        goal.status = "paused"
+        goal.note("paused", "Paused by the person.")
+    return {"goal": goal.to_dict() if goal else None}
+
+
+@router.post("/goal/resume")
+async def resume_goal(request: Request) -> dict[str, Any]:
+    """Resume a paused goal, or give an ended one a fresh turn budget."""
+    goal = _service(request).goals.goal
+    if goal is not None and not goal.running and goal.status != "met":
+        if goal.turns >= goal.max_turns:
+            goal.max_turns = goal.turns + 20
+        goal.status, goal.stopped_reason, goal.idle_turns, goal.judge_failures = "active", "", 0, 0
+        goal.note("resumed", "Resumed by the person.")
+    return {"goal": goal.to_dict() if goal else None}
 
 
 @router.delete("/goal")

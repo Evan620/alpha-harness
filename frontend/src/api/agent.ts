@@ -91,20 +91,51 @@ export interface Permissions {
   alwaysYours: { action: string; summary: string; tier: string }[]
 }
 
+export interface GoalVerdict {
+  turn: number
+  verdict: string
+  reason: string
+  at: number
+}
+
 export interface Goal {
   objective: string
+  doneWhen: string
   status: string
+  running: boolean
   stoppedReason: string
   createdAt: number
+  turns: number
+  maxTurns: number
+  lastVerdict: string
+  lastReason: string
+  waitUntil: number | null
+  threadId: number | null
+  history: GoalVerdict[]
   budgets: Record<string, number>
   spent: Record<string, number>
   remaining: Record<string, number | null>
 }
 
+export type GoalStep =
+  | { action: 'none'; goal: Goal | null }
+  | { action: 'continue'; prompt: string; goal: Goal }
+  | { action: 'wait'; seconds: number; prompt: string; goal: Goal }
+  | { action: 'await_approval'; goal: Goal }
+  | { action: 'stop'; goal: Goal }
+
 export const agent = {
   goal: () => http.get<{ goal: Goal | null }>('/api/agent/goal'),
-  setGoal: (body: { objective: string; brain_simulations: number }) =>
-    http.put<{ goal: Goal }>('/api/agent/goal', body),
+  setGoal: (body: {
+    objective: string
+    done_when: string
+    brain_simulations: number
+    max_turns: number
+  }) => http.put<{ goal: Goal }>('/api/agent/goal', body),
+  goalStep: (threadId: number | null) =>
+    http.post<GoalStep>('/api/agent/goal/step', { thread_id: threadId }),
+  pauseGoal: () => http.post<{ goal: Goal | null }>('/api/agent/goal/pause'),
+  resumeGoal: () => http.post<{ goal: Goal | null }>('/api/agent/goal/resume'),
   clearGoal: () => http.del<{ goal: null }>('/api/agent/goal'),
   permissions: () => http.get<Permissions>('/api/agent/permissions'),
   setPermissions: (mode: PermissionMode) =>
