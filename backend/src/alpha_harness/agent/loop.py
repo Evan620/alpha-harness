@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -26,12 +27,13 @@ if TYPE_CHECKING:
 
 from ..llm.providers import get as provider_spec
 from ..llm.registry import DEEP_MODEL
-from . import actions, guide, store
+from . import actions, costs, guide, store
 from .approval import ApprovalError, ApprovalGate
 from .bus import EventBus
 from .doctrine import DOCTRINE
 from .goals import Goal, GoalBook
 from .permissions import Permissions
+from .reflect import Reflector, playbooks_for
 from .registry import AgentContext, UnknownCapability
 from .runner import GoalRunner
 
@@ -217,6 +219,7 @@ HOW TO WRITE (rendered as Markdown)
 - No em-dashes. No filler like "Great question".
 
 {DOCTRINE}
+{context.get("learned") or ""}
 THE PLATFORM (every page)
 {guide.site_map()}
 
@@ -246,7 +249,12 @@ class AgentService:
         self.registry, self.index = actions.build(app)
         self.registry.validate()
         self.goals = GoalBook()
-        self.gate = ApprovalGate(state, self.registry, goals=self.goals)
+        self.gate = ApprovalGate(
+            state,
+            self.registry,
+            goals=self.goals,
+            estimate=lambda cap, arguments: costs.estimate(app, cap, arguments),
+        )
         self.permissions = Permissions(state.settings.data_dir / "vision.json")
         self.threads: dict[int, Thread] = {}
         self._ids = itertools.count(1)
@@ -254,6 +262,9 @@ class AgentService:
         self.turn_lock = asyncio.Lock()
         self.bus = EventBus()
         self.runner = GoalRunner(self)
+        self.reflector = Reflector(self)
+        #: Playbooks shown to each thread's turns, credited when its goal ends.
+        self.used_playbooks: dict[int, list[int]] = {}
         state.hub.listen(self.runner.on_hub)
         self._loaded = False
 
@@ -294,6 +305,75 @@ class AgentService:
         else:
             self.runner.start(self.runner.prompt_for("resume"))
 
+    async def _learned(self, thread: Thread) -> str:
+        """Rules the person accepted, and the playbooks that fit this task. Read each turn,
+        so a rule accepted a minute ago steers the very next step."""
+        from sqlalchemy import select
+
+        from ..db.models import DoctrineRule, Playbook
+
+        parts: list[str] = []
+        try:
+            async with self.state.db.session() as session:
+                rules = (
+                    (
+                        await session.execute(
+                            select(DoctrineRule).where(DoctrineRule.status == "accepted")
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            if rules:
+                parts.append(
+                    "RULES LEARNED FROM EVIDENCE, ACCEPTED BY THE PERSON"
+                    " (they outrank the doctrine above)\n" + "\n".join(f"- {r.text}" for r in rules)
+                )
+            goal = self.goals.goal
+            ask = " ".join(
+                str(m.get("content") or "") for m in thread.messages[-3:] if m.get("role") == "user"
+            )
+            topic = f"{goal.objective if goal else ''} {ask}"
+            books = await playbooks_for(self, topic)
+            if books:
+                used = self.used_playbooks.setdefault(thread.id, [])
+                async with self.state.db.session() as session:
+                    for b in books:
+                        if b.id not in used:
+                            used.append(b.id)
+                            row = await session.get(Playbook, b.id)
+                            if row is not None:
+                                row.uses += 1
+                parts.append(
+                    "PLAYBOOKS YOU WROTE FROM EARLIER WORK (follow them where they fit; if a step"
+                    " fails, say so, and the review will correct it)\n"
+                    + "\n\n".join(
+                        f"## {b.name} (worked {b.successes}x, failed {b.failures}x)\n"
+                        f"When: {b.when_to_use}\nSteps:\n{b.steps}\n"
+                        + (f"Pitfalls: {b.pitfalls}" if b.pitfalls else "")
+                        for b in books
+                    )
+                )
+        except Exception:
+            log.warning("agent.learned_failed", exc_info=True)
+        return "\n\n".join(parts)
+
+    def _note_task(self, entry: dict[str, Any] | None, result: dict[str, Any]) -> None:
+        """A lab task the goal created or started, so a spent budget can pause it."""
+        goal = self.goals.goal
+        path = (entry or {}).get("path") or ""
+        if goal is None or not result.get("ok") or not re.search(r"/(tasks|run)$", path):
+            return
+        data = result.get("data")
+        rows = data if isinstance(data, list) else [data]
+        for row in rows:
+            if (
+                isinstance(row, dict)
+                and isinstance(row.get("id"), int)
+                and row["id"] not in goal.task_ids
+            ):
+                goal.task_ids.append(row["id"])
+
     def thread_for_goal(self) -> Thread:
         goal = self.goals.goal
         thread = self._thread(goal.thread_id if goal else None)
@@ -324,6 +404,8 @@ class AgentService:
                     yield event
             finally:
                 repair(thread)
+        # After the lock is released: learning never holds up the next turn.
+        self.reflector.after_turn(thread)
 
     # -- public ----------------------------------------------------------
 
@@ -405,6 +487,7 @@ class AgentService:
             **context,
             "mode": self.permissions.mode,
             "goalRules": _goal_rules(self.goals.goal),
+            "learned": await self._learned(thread),
         }
         yield {"type": "start", "threadId": thread.id, "mode": self.permissions.mode}
         thread.last_actions = 0
@@ -554,6 +637,7 @@ class AgentService:
                     step["proposal"] = result.proposal.to_dict()
                 if result.status == "executed" and isinstance(result.result, dict):
                     step["httpStatus"] = result.result.get("status")
+                    self._note_task(entry, result.result)
                 return result.to_dict(), step
             step["status"] = "error"
             return {"error": f"no tool named {name}"}, step

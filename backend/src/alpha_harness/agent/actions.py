@@ -43,7 +43,7 @@ READ_ONLY_POSTS = re.compile(
 )
 #: Local writes that spend nothing and are worth having happen freely. A memory that costs
 #: an approval prompt to write does not get written, and then the agent repeats itself.
-AUTO_POSTS = re.compile(r"^/api/journal$")
+AUTO_POSTS = re.compile(r"^/api/(journal|playbooks|doctrine/proposals)$")
 
 #: Previews that still spend something are not read-only.
 SPENDING_PREVIEWS = re.compile(r"^/api/power-pool-lab/preview$")

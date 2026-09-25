@@ -89,7 +89,12 @@ async def search(
     limit: Annotated[int, Query(ge=1, le=200)] = 40,
 ) -> list[Note]:
     """Recent notes, newest first. Search before proposing a sweep."""
-    stmt = select(ResearchNote).order_by(ResearchNote.created_at.desc()).limit(limit)
+    stmt = (
+        select(ResearchNote)
+        .where(ResearchNote.archived.is_(False))
+        .order_by(ResearchNote.created_at.desc())
+        .limit(limit)
+    )
     if kind:
         stmt = stmt.where(ResearchNote.kind == kind)
     if subject:

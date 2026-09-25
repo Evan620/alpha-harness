@@ -6,7 +6,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -127,6 +127,7 @@ async def set_goal(payload: GoalRequest, request: Request) -> dict[str, Any]:
             correlation_jobs=payload.correlation_jobs,
             thread_id=payload.thread_id,
             context=_context(payload.context),
+            baseline_used=int(await service.state.tracker.used_today()),
         )
     )
     service.thread_for_goal()
@@ -179,14 +180,14 @@ async def clear_goal(request: Request) -> dict[str, Any]:
 
 
 @router.get("/events")
-async def events(
-    request: Request, since: Annotated[int, Query(ge=-1)] = -1
-) -> StreamingResponse:
+async def events(request: Request, since: Annotated[int, Query(ge=-1)] = -1) -> StreamingResponse:
     """Everything Vision does on its own (goal turns, verdicts, waits), as NDJSON, from
     ``since`` onward and then live. A reopened panel catches up from where it left off."""
     service = await _service(request)
     # -1: a panel opening fresh. Replay the current goal's story, not the whole log.
-    start = service.bus.goal_from if since < 0 else since
+    # A position past the end is from before a backend restart (the log starts again at 1):
+    # treat that panel as opening fresh, or it would miss everything until the count caught up.
+    start = service.bus.goal_from if since < 0 or since > service.bus.seq else since
 
     async def body() -> AsyncIterator[bytes]:
         async for event in service.bus.follow(start):
@@ -199,6 +200,46 @@ async def events(
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class RuleDecision(BaseModel):
+    decision: Literal["accept", "reject"]
+
+
+@router.post("/rules/{rule_id}")
+async def decide_rule(rule_id: int, payload: RuleDecision, request: Request) -> dict[str, Any]:
+    """Accept or reject a rule Vision proposed. The person's alone: this route is outside
+    Vision's action catalog, so it cannot accept its own proposal."""
+    from datetime import UTC, datetime
+
+    from ..db.models import DoctrineRule
+
+    service = await _service(request)
+    async with service.state.db.session() as session:
+        row = await session.get(DoctrineRule, rule_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="No rule with that number.")
+        row.status = "accepted" if payload.decision == "accept" else "rejected"
+        row.decided_at = datetime.now(UTC)
+        text, status = row.text, row.status
+    service.bus.publish(
+        {"type": "loop", "kind": "status", "text": f"Rule #{rule_id} {status}: {text}"}
+    )
+    return {"id": rule_id, "status": status, "text": text}
+
+
+@router.post("/playbooks/{playbook_id}/archive")
+async def archive_playbook(playbook_id: int, request: Request) -> dict[str, Any]:
+    from ..db.models import Playbook
+
+    service = await _service(request)
+    async with service.state.db.session() as session:
+        row = await session.get(Playbook, playbook_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="No playbook with that number.")
+        row.status = "archived"
+        name = row.name
+    return {"id": playbook_id, "status": "archived", "name": name}
 
 
 class PermissionsRequest(BaseModel):

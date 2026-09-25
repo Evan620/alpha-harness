@@ -36,6 +36,7 @@ from .api import (
     ga,
     journal,
     lab_tasks,
+    learning,
     llm,
     portfolio,
     power_pool_lab,
@@ -179,6 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agent.router)
     app.include_router(analyse.router)
     app.include_router(journal.router)
+    app.include_router(learning.router)
     app.include_router(update.router)
     app.include_router(ws.router)
 

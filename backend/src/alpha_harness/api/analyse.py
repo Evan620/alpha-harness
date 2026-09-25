@@ -37,10 +37,11 @@ MAX_ROWS = 500
 READ_VERBS = ("select", "with", "describe", "show", "explain", "summarize", "pragma table_info")
 
 #: Belt and braces for a read verb hiding a write, e.g. a CTE containing DELETE, or DuckDB's
-#: COPY ... TO, which writes a file from a SELECT.
+#: COPY ... TO, which writes a file from a SELECT. REPLACE is deliberately absent: it is an
+#: everyday string function in reads, and CREATE OR REPLACE is already caught by CREATE.
 FORBIDDEN = re.compile(
     r"\b(insert|update|delete|drop|create|alter|attach|detach|copy|export|import|install|"
-    r"load|vacuum|checkpoint|truncate|replace|grant|revoke|call|set|reset)\b",
+    r"load|vacuum|checkpoint|truncate|grant|revoke|call|set|reset)\b",
     re.IGNORECASE,
 )
 

@@ -75,6 +75,11 @@ class Goal:
     context: dict[str, Any] = field(default_factory=dict)
     #: What to say when a WAIT releases, from the judge's verdict.
     resume_prompt: str = ""
+    #: The harness's own launch counter when the goal began. Spend is re-read against it,
+    #: so the ceiling tracks what was launched, not what a request claimed.
+    baseline_used: int = 0
+    #: Lab tasks this goal created or started, so a spent budget can pause them.
+    task_ids: list[int] = field(default_factory=list)
 
     def to_record(self) -> dict[str, Any]:
         """Everything, for persistence. :meth:`to_dict` is the trimmed view for the UI."""

@@ -152,7 +152,32 @@ async function follow(
   }
 }
 
+export interface LearnedRule {
+  id: number
+  text: string
+  evidence: string
+  status: 'proposed' | 'accepted' | 'rejected'
+  author: string
+}
+
+export interface LearnedPlaybook {
+  id: number
+  name: string
+  whenToUse: string
+  steps: string
+  uses: number
+  successes: number
+  failures: number
+  status: string
+}
+
 export const agent = {
+  rules: () => http.get<LearnedRule[]>('/api/doctrine'),
+  decideRule: (id: number, decision: 'accept' | 'reject') =>
+    http.post<{ id: number; status: string; text: string }>(`/api/agent/rules/${id}`, { decision }),
+  playbooks: () => http.get<LearnedPlaybook[]>('/api/playbooks'),
+  archivePlaybook: (id: number) =>
+    http.post<{ id: number; name: string }>(`/api/agent/playbooks/${id}/archive`),
   goal: () => http.get<{ goal: Goal | null }>('/api/agent/goal'),
   setGoal: (body: {
     objective: string

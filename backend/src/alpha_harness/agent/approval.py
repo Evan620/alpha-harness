@@ -41,6 +41,9 @@ from .registry import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    Estimator = Callable[["Capability", dict[str, Any]], Awaitable[int | None]]
     from collections.abc import Mapping
 
     from ..state import AppState
@@ -320,6 +323,7 @@ class ApprovalGate:
         max_tracked: int = 256,
         execution_timeout: float = LIMITS["execution_timeout_seconds"],
         goals: GoalBook | None = None,
+        estimate: Estimator | None = None,
     ) -> None:
         self._state = state
         self._caps = capabilities
@@ -333,6 +337,9 @@ class ApprovalGate:
         #: The active goal's ceiling. Consulted in :meth:`_execute`, the one path that runs a
         #: capability, so a budget cannot be sidestepped by reaching a different entry point.
         self._goals = goals or GoalBook()
+        #: Prices a simulation-spending call from the work itself (see ``costs.estimate``).
+        #: Without it, the count comes from a ``simulations`` argument, if there is one.
+        self._estimate = estimate
 
     async def dispatch(
         self,
@@ -372,8 +379,9 @@ class ApprovalGate:
             raise GateBypass(f"{tool} is declared {cap.tier} but reached the executing path.")
 
         params, canonical, digest = self._validate(cap, arguments)
+        spends = await self._priced(cap, canonical)
         if cap.tier is Tier.AUTO:
-            result = await self._execute(cap, params, context, self._spends(cap, canonical))
+            result = await self._execute(cap, params, context, spends)
             return DispatchResult(status="executed", tool=tool, tier=cap.tier, result=result)
         if cap.tier is not Tier.CONFIRM:
             raise GateBypass(f"{tool} has unsupported tier {cap.tier}.")
@@ -409,7 +417,7 @@ class ApprovalGate:
             effects=tuple(sorted(effect.value for effect in cap.effects)),
             arguments=canonical,
             payload_hash=digest,
-            spends=self._spends(cap, canonical),
+            spends=spends,
             irreversible=cap.irreversible,
             origin=origin,
             context=context,
@@ -616,6 +624,15 @@ class ApprovalGate:
                 break
             oldest = min(candidates, key=lambda proposal: proposal.decided_mono or 0.0)
             del self._proposals[oldest.id]
+
+    async def _priced(self, cap: Capability, canonical: Mapping[str, Any]) -> dict[str, int]:
+        """What the call will spend, with simulations priced from the work when possible."""
+        spends = self._spends(cap, canonical)
+        if self._estimate is not None and Effect.SIMULATION_QUOTA in cap.effects:
+            priced = await self._estimate(cap, dict(canonical))
+            if priced is not None:
+                spends["brain_simulations"] = priced
+        return spends
 
     def _spends(self, cap: Capability, canonical: Mapping[str, Any]) -> dict[str, int]:
         brain_effects = {

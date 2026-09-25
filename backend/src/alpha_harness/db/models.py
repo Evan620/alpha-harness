@@ -616,8 +616,10 @@ class ResearchNote(Base):
     scope: Mapped[str] = mapped_column(String(48), default="")
     body: Mapped[str] = mapped_column(Text)
     tags: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    #: "vision" or "human", so a claim can be weighed by who made it.
+    #: "vision", "vision-review" or "human", so a claim can be weighed by who made it.
     author: Mapped[str] = mapped_column(String(24), default="vision")
+    #: Set by the curator when a note is superseded or merged. Archived, never deleted.
+    archived: Mapped[bool] = mapped_column(default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
 
 
@@ -642,3 +644,47 @@ class AgentGoalRow(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)
+
+
+class Playbook(Base):
+    """A procedure Vision learned: how to do one kind of task, from what worked.
+
+    Hermes calls these skills: procedural memory, narrower and more actionable than a note.
+    Written after a goal succeeds, loaded when a similar task starts, patched when a step
+    fails. Archived by the curator when it stops earning its place, never deleted.
+    """
+
+    __tablename__ = "playbook"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    when_to_use: Mapped[str] = mapped_column(Text, default="")
+    steps: Mapped[str] = mapped_column(Text, default="")
+    pitfalls: Mapped[str] = mapped_column(Text, default="")
+    uses: Mapped[int] = mapped_column(default=0)
+    successes: Mapped[int] = mapped_column(default=0)
+    failures: Mapped[int] = mapped_column(default=0)
+    #: active | archived
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    author: Mapped[str] = mapped_column(String(24), default="vision-review")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)
+
+
+class DoctrineRule(Base):
+    """A rule Vision proposes from evidence, which steers it only once the person accepts.
+
+    Doctrine shapes every decision the agent makes, so unlike notes and playbooks it is
+    never self-edited: proposed here, accepted or rejected by the person.
+    """
+
+    __tablename__ = "doctrine_rule"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[str] = mapped_column(Text, default="")
+    #: proposed | accepted | rejected
+    status: Mapped[str] = mapped_column(String(16), default="proposed")
+    author: Mapped[str] = mapped_column(String(24), default="vision-review")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)

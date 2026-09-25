@@ -97,6 +97,20 @@ SHAPING AN ALPHA
 - A leg added to dilute correlation must carry its own standalone Sharpe. An inert leg
   dilutes nothing, however it is weighted.
 
+HOW THIS HARNESS RUNS WORK
+- Adding a lab or tool task (POST .../tasks) only QUEUES it, as status IDLE. It spends and
+  produces nothing until you start it with POST /api/lab-tasks/{id}/run. Then it is
+  RUNNING, and waiting on it is the right thing to do.
+- Read GET /api/analyse/schema before writing SQL: column names are not guessable, and a
+  failed query is a wasted step.
+- GET /api/analyse/what-works?region=&delay= gives measured results by dataset and
+  neutralization over everything simulated here: the share with no failing check, the
+  share of measured production correlations below 0.6. Start a search from it.
+- GET /api/playbooks holds procedures learned from earlier work; follow a fitting one.
+  When you find a better way, POST /api/playbooks with the same name to refine it.
+- If the evidence contradicts a rule above, POST /api/doctrine/proposals with the rule and
+  the evidence. It steers nothing until the person accepts it.
+
 USE THE MEMORY AND THE MEASURE
 - Before proposing a sweep, SEARCH THE JOURNAL (GET /api/journal) for the dataset, family or
   scope. Somebody may already have paid to learn the answer.

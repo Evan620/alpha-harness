@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import structlog
 
+from . import costs
 from .goals import MAX_JUDGE_FAILURES, STALL_TURNS, Goal
 
 if TYPE_CHECKING:
@@ -42,9 +43,11 @@ Choose exactly one verdict:
 - "met": the goal is achieved AND the transcript shows concrete evidence of it: alpha ids,
   check results, numbers returned by tools, a task created with its id. A claim such as
   "done" or "all requirements met" without that evidence is NOT met.
-- "wait": not met, and the next useful step is to wait for work already running (queued
-  or running simulations, a lab task in progress, a sync). Give wait_seconds, 30 to 1800.
-  Choose this ONLY when acting again now would be busy-work.
+- "wait": not met, and the next useful step is to wait for work already RUNNING
+  (simulations in flight, a lab task with status RUNNING, a sync). Give wait_seconds, 30 to
+  1800. Choose this ONLY when acting again now would be busy-work. A task that is IDLE
+  (added but never started), PAUSED or FAILED is NOT running: waiting on it waits forever,
+  so the verdict is continue, and the next step is to start it.
 - "blocked": the agent needs the person: an approval, a decision between options, a
   sign-in or key, or information only they have.
 - "impossible": cannot be achieved as stated, e.g. it needs something the agent may never
@@ -161,6 +164,7 @@ async def _judge(service: AgentService, goal: Goal, thread: Thread) -> dict[str,
         + f"Turn {goal.turns} of {goal.max_turns}. Simulation budget left: "
         + ("no ceiling" if budget is None else str(budget))
         + f"\n\nWork running now:\n{await _running_work(service)}"
+        + f"\n\nLab tasks this goal created:\n{await _goal_tasks(service, goal)}"
         + f"\n\nRecent transcript:\n{_transcript(thread)}\n\n"
         + "Verdict?"
     )
@@ -170,6 +174,47 @@ async def _judge(service: AgentService, goal: Goal, thread: Thread) -> dict[str,
         log.warning("goal.judge_call_failed", exc_info=True)
         return None
     return _parse(answer.text)
+
+
+async def _goal_tasks(service: AgentService, goal: Goal) -> str:
+    """The goal's own lab tasks and where each one stands. An IDLE task was added but never
+    started: it spends and progresses only after ``POST /api/lab-tasks/{id}/run``."""
+    if not goal.task_ids:
+        return "none yet"
+    transport = httpx.ASGITransport(app=service.app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1", timeout=15.0
+    ) as c:
+        try:
+            tasks = (await c.get("/api/lab-tasks")).json().get("tasks") or []
+        except httpx.HTTPError, ValueError, AttributeError:
+            return "unknown"
+    lines = []
+    for t in tasks:
+        if t.get("id") in goal.task_ids:
+            status = str(t.get("status"))
+            note = " (added but NOT started: run it)" if status == "IDLE" else ""
+            lines.append(
+                f"#{t['id']} {t.get('labName')}: {status}{note}, "
+                f"{t.get('simulated', 0)} of {t.get('target', 0)} simulated"
+            )
+    return "\n".join(lines) or "none found"
+
+
+async def _pause_tasks(service: AgentService, goal: Goal) -> None:
+    """The budget is spent: stop the goal's own tasks from queueing more simulations."""
+    transport = httpx.ASGITransport(app=service.app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://127.0.0.1",
+        headers={"x-harness-client": "1"},
+        timeout=15.0,
+    ) as c:
+        for task_id in goal.task_ids:
+            try:
+                await c.post(f"/api/lab-tasks/{task_id}/pause")
+            except httpx.HTTPError:
+                log.warning("goal.pause_task_failed", task=task_id)
 
 
 def _done_when(goal: Goal) -> str:
@@ -195,6 +240,9 @@ async def step(service: AgentService, thread_id: int | None) -> dict[str, Any]:
 
     goal.turns += 1
     goal.idle_turns = 0 if thread.last_actions else goal.idle_turns + 1
+    # Spend is what the harness actually launched, whatever the requests claimed.
+    actual = await costs.spent_since(service.state, goal.baseline_used)
+    goal.spent["brain_simulations"] = max(goal.spent.get("brain_simulations", 0), actual)
 
     # Hard stops, checked in code so no verdict can talk past them.
     left = goal.remaining("brain_simulations")
@@ -205,6 +253,8 @@ async def step(service: AgentService, thread_id: int | None) -> dict[str, Any]:
     elif goal.idle_turns >= STALL_TURNS:
         goal.end("stalled", f"{goal.idle_turns} turns in a row without taking any action")
     if not goal.running:
+        if goal.status == "spent":
+            await _pause_tasks(service, goal)
         return {"action": "stop", "goal": goal.to_dict()}
 
     verdict = await _judge(service, goal, thread)

@@ -190,6 +190,12 @@ class GoalRunner:
                 }
             )
         elif action == "stop":
+            live = self.service.goals.goal
+            if live is not None:
+                thread = self.service.thread_for_goal()
+                self.service.reflector.after_goal(
+                    live, thread, self.service.used_playbooks.get(thread.id, [])
+                )
             label = str(goal.get("status", "")).replace("_", " ")
             text = f"{label.capitalize()}: {goal.get('stoppedReason') or reason}"
             bus.publish({"type": "loop", "kind": "stop", "text": text})

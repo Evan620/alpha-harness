@@ -70,6 +70,12 @@ const COMMANDS = [
     hint: '<condition> to start, or clear, pause, resume. Alone shows status',
     args: true,
   },
+  {
+    name: '/rules',
+    hint: 'Rules Vision proposed from evidence. accept N or reject N to decide',
+    args: true,
+  },
+  { name: '/playbooks', hint: 'Procedures Vision learned. archive N to retire one', args: true },
   { name: '/permissions', hint: 'Ask first or Auto: whether Vision asks before acting' },
   { name: '/new', hint: 'Start a new conversation' },
   { name: '/clear', hint: 'Clear this conversation' },
@@ -395,6 +401,60 @@ export function AgentPanel() {
     void setGoal(arg.trim())
   }
 
+  /** `/rules [accept|reject N]`: what Vision proposed, and the person's decision on it. */
+  const rulesCommand = async (arg: string) => {
+    const m = /^(accept|reject)\s+#?(\d+)$/i.exec(arg.trim())
+    if (m) {
+      const decision = (m[1] ?? '').toLowerCase() as 'accept' | 'reject'
+      await agent.decideRule(Number(m[2]), decision).catch((e) => pushLoop('stop', errorMessage(e)))
+      return
+    }
+    const rules = await agent.rules().catch(() => [])
+    const open = rules.filter((r) => r.status === 'proposed')
+    const accepted = rules.filter((r) => r.status === 'accepted')
+    if (!rules.length) {
+      pushLoop(
+        'status',
+        'No rules yet. Vision proposes one when the evidence contradicts its doctrine.',
+      )
+      return
+    }
+    for (const r of open)
+      pushLoop(
+        'status',
+        `Proposed #${r.id}: ${r.text} Evidence: ${r.evidence} (/rules accept ${r.id} or /rules reject ${r.id})`,
+      )
+    for (const r of accepted) pushLoop('status', `Accepted #${r.id}: ${r.text}`)
+    if (!open.length)
+      pushLoop(
+        'status',
+        `Nothing waiting on you. ${accepted.length} accepted rule(s) steer Vision.`,
+      )
+  }
+
+  /** `/playbooks [archive N]`: procedures Vision learned from earlier work. */
+  const playbooksCommand = async (arg: string) => {
+    const m = /^archive\s+#?(\d+)$/i.exec(arg.trim())
+    if (m) {
+      const res = await agent.archivePlaybook(Number(m[1])).catch((e) => {
+        pushLoop('stop', errorMessage(e))
+        return null
+      })
+      if (res) pushLoop('status', `Archived playbook #${res.id}: ${res.name}`)
+      return
+    }
+    const books = await agent.playbooks().catch(() => [])
+    if (!books.length) {
+      pushLoop('status', 'No playbooks yet. Vision writes one after a goal succeeds.')
+      return
+    }
+    for (const b of books)
+      pushLoop(
+        'status',
+        `#${b.id} ${b.name}: worked ${b.successes}, failed ${b.failures}, used ${b.uses}. ${b.whenToUse}`,
+      )
+  }
+
   const showPermissions = () => {
     setEntries((prev) => [...prev.filter((e) => e.role !== 'permissions'), { role: 'permissions' }])
   }
@@ -407,6 +467,12 @@ export function AgentPanel() {
     if (goal) {
       setText('')
       return goalCommand(goal[1] ?? '')
+    }
+    const learned = /^\/(rules|playbooks)(?:\s+([\s\S]*))?$/i.exec(trimmed)
+    if (learned) {
+      setText('')
+      const which = (learned[1] ?? '').toLowerCase()
+      return void (which === 'rules' ? rulesCommand : playbooksCommand)(learned[2] ?? '')
     }
     if (busy) return
     setText('')
