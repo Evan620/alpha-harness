@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import structlog
 
-from . import costs
+from . import costs, research
 from .goals import MAX_JUDGE_FAILURES, STALL_TURNS, Goal
 
 if TYPE_CHECKING:
@@ -165,6 +165,7 @@ async def _judge(service: AgentService, goal: Goal, thread: Thread) -> dict[str,
         + ("no ceiling" if budget is None else str(budget))
         + f"\n\nWork running now:\n{await _running_work(service)}"
         + f"\n\nLab tasks this goal created:\n{await _goal_tasks(service, goal)}"
+        + f"\n\nResearch memory:\n{research.ledger_for(service.app).summary()}"
         + f"\n\nRecent transcript:\n{_transcript(thread)}\n\n"
         + "Verdict?"
     )
@@ -173,6 +174,8 @@ async def _judge(service: AgentService, goal: Goal, thread: Thread) -> dict[str,
     except Exception:
         log.warning("goal.judge_call_failed", exc_info=True)
         return None
+    # The judge's call is part of what the goal costs.
+    service.goals.record({"llm_requests": 1})
     return _parse(answer.text)
 
 
@@ -291,7 +294,7 @@ async def step(service: AgentService, thread_id: int | None) -> dict[str, Any]:
         goal.note("wait", reason)
         prompt = RESUME_PROMPT.format(
             objective=goal.objective, done_when=_done_when(goal), reason=reason
-        )
+        ) + _protocol(service, goal)
         return {"action": "wait", "seconds": seconds, "prompt": prompt, "goal": goal.to_dict()}
 
     goal.note("continue", reason)
@@ -301,5 +304,12 @@ async def step(service: AgentService, thread_id: int | None) -> dict[str, Any]:
         objective=goal.objective,
         done_when=_done_when(goal),
         reason=reason,
-    )
+    ) + _protocol(service, goal)
     return {"action": "continue", "prompt": prompt, "goal": goal.to_dict()}
+
+
+def _protocol(service: AgentService, goal: Goal) -> str:
+    """The research-round instructions, flagging a round the agent forgot to record."""
+    ledger = research.ledger_for(service.app)
+    unrecorded = bool(goal.round_started_at) and ledger.rounds_since(goal.round_started_at) == 0
+    return "\n\n" + research.round_protocol(goal, ledger, unrecorded=unrecorded)

@@ -196,16 +196,78 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://integrate.api.nvidia.com/v1",
         onboarding_url="https://build.nvidia.com/",
         key_hint="nvapi-…",
-        tier_note="Free credits with an NVIDIA account, no card.",
+        tier_note=(
+            "Free endpoints with an NVIDIA account (phone check), no card. Trial terms: "
+            "not for production, prompts may be used by NVIDIA, one key per person."
+        ),
         models=(
+            # NVIDIA does not publish per-model limits; ~40 rpm is the commonly reported
+            # figure, and rpd stays deliberately low so a wrong guess cannot spend a day.
+            _model(
+                "deepseek-ai/deepseek-v4.1-flash",
+                "DeepSeek V4.1 Flash",
+                "nvidia",
+                rpm=40,
+                rpd=1_000,
+                tpm=1_000_000,
+                summary=(
+                    "1M context, tool calling, 76.2 on tau2-bench, but heavily queued on "
+                    "the free endpoint (2+ min a call, 3 Oct 2026)."
+                ),
+            ),
+            _model(
+                "z-ai/glm-5.3",
+                "GLM-5.3",
+                "nvidia",
+                rpm=40,
+                rpd=1_000,
+                tpm=1_000_000,
+                summary=(
+                    "1M context, tool calling, always reasons. 76.0 on tau2-bench, but "
+                    "about a minute a call on the free endpoint (3 Oct 2026)."
+                ),
+            ),
+            _model(
+                "z-ai/glm-5.3-flash",
+                "GLM-5.3 Flash",
+                "nvidia",
+                rpm=40,
+                rpd=1_000,
+                tpm=1_000_000,
+                summary="Smaller GLM-5.3 with tool calling. 75.6 on tau2-bench.",
+            ),
+            _model(
+                "moonshotai/kimi-k3",
+                "Kimi K3",
+                "nvidia",
+                rpm=40,
+                rpd=1_000,
+                tpm=1_000_000,
+                summary=(
+                    "Tool calling, 71.9 on tau2-bench. About 15 s a call on the free "
+                    "endpoint (3 Oct 2026)."
+                ),
+            ),
+            _model(
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "Nemotron 3 Ultra",
+                "nvidia",
+                rpm=40,
+                rpd=1_000,
+                tpm=1_000_000,
+                summary=(
+                    "NVIDIA's own 550B MoE, tool calling, 72.0 on tau2-bench. Fastest free "
+                    "endpoint here (1-3 s a call, 3 Oct 2026)."
+                ),
+                recommended=True,
+            ),
             _model(
                 "meta/llama-3.3-70b-instruct",
                 "Llama 3.3 70B",
                 "nvidia",
                 rpm=40,
                 rpd=1_000,
-                summary="Hosted on NVIDIA's own inference stack.",
-                recommended=True,
+                summary="Hosted on NVIDIA's own inference stack. Older, weaker at tool calls.",
             ),
         ),
     ),

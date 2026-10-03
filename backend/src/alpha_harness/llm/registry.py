@@ -295,6 +295,13 @@ class ModelRegistry:
 
     # -- editing ---------------------------------------------------------
 
+    def add(self, info: ModelInfo, *, replace: bool = False) -> None:
+        """Put one model on the roster. An existing row is kept unless ``replace``."""
+        if replace:
+            self._models[info.id] = info
+        else:
+            self._models.setdefault(info.id, info)
+
     def merge_discovered(self, names: list[str], provider: str = "google") -> list[str]:
         """Add models the API reports that we have never heard of.
 

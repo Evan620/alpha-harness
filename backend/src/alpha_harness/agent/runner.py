@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from . import judge
+from . import judge, research
 
 if TYPE_CHECKING:
     from .loop import AgentService
@@ -92,7 +92,9 @@ class GoalRunner:
             return ""
         done = f"Met when: {goal.done_when}\n" if goal.done_when else ""
         template = START_PROMPT if kind == "start" else RESUME_PROMPT
-        return template.format(objective=goal.objective, done_when=done)
+        ledger = research.ledger_for(self.service.app)
+        protocol = research.round_protocol(goal, ledger)
+        return template.format(objective=goal.objective, done_when=done) + "\n\n" + protocol
 
     # -- the loop ----------------------------------------------------------
 
@@ -190,11 +192,18 @@ class GoalRunner:
                 }
             )
         elif action == "stop":
-            live = self.service.goals.goal
-            if live is not None:
-                thread = self.service.thread_for_goal()
+            # A finished goal has already cleared itself, so read it back from ``last``;
+            # reflection must see the goal and its own thread, not a fresh one.
+            goals = self.service.goals
+            ended = goals.goal or goals.last
+            thread = (
+                self.service.threads.get(ended.thread_id)
+                if ended is not None and ended.thread_id is not None
+                else None
+            )
+            if ended is not None and thread is not None:
                 self.service.reflector.after_goal(
-                    live, thread, self.service.used_playbooks.get(thread.id, [])
+                    ended, thread, self.service.used_playbooks.get(thread.id, [])
                 )
             label = str(goal.get("status", "")).replace("_", " ")
             text = f"{label.capitalize()}: {goal.get('stoppedReason') or reason}"

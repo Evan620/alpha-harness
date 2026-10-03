@@ -33,6 +33,7 @@ from .api import (
     auth,
     catalog,
     chat,
+    correlations,
     ga,
     journal,
     lab_tasks,
@@ -41,6 +42,7 @@ from .api import (
     portfolio,
     power_pool_lab,
     quarter,
+    research,
     search_lab,
     sims,
     tasks,
@@ -164,6 +166,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(catalog.router)
     app.include_router(sims.router)
     app.include_router(alphas.router)
+    app.include_router(correlations.router)
     app.include_router(template_lab.router)
     app.include_router(ga.router)
     app.include_router(llm.router)
@@ -180,6 +183,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agent.router)
     app.include_router(analyse.router)
     app.include_router(journal.router)
+    app.include_router(research.router)
     app.include_router(learning.router)
     app.include_router(update.router)
     app.include_router(ws.router)

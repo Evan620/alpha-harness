@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import structlog
 from sqlalchemy import select
 
+from ..brain.corrqueue import is_unmeasured
 from ..brain.schemas import QUICK_MODE
 from ..db.models import SimulationRecord
 
@@ -91,8 +92,10 @@ def verdict(checks: list[dict[str, Any]], simulation_mode: str | None = None) ->
     """
     if simulation_mode == QUICK_MODE:
         return "refused"
+    # A correlation BRAIN reported as WARNING or ERROR with no value was not computed (its
+    # one correlation slot was busy), so it is still being judged, not a refusal.
     results = {
-        str(c.get("result", "")).upper()
+        "PENDING" if is_unmeasured(c) else str(c.get("result", "")).upper()
         for c in checks
         if str(c.get("name", "")).upper() not in IGNORED_CHECKS
     }

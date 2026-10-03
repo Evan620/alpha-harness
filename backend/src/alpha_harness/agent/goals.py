@@ -42,6 +42,10 @@ STALL_TURNS = 3
 #: Judge replies that could not be read before the loop pauses and says so.
 MAX_JUDGE_FAILURES = 3
 RUNNING = frozenset({"active", "waiting"})
+#: A goal in one of these has finished. It clears itself: the outcome is already in the
+#: conversation, and a finished goal left in place reads as current work. Paused is not here:
+#: a paused goal can be resumed.
+ENDED = frozenset({"met", "impossible", "blocked", "spent", "turns_out", "stalled", "stopped"})
 
 
 @dataclass
@@ -80,6 +84,15 @@ class Goal:
     baseline_used: int = 0
     #: Lab tasks this goal created or started, so a spent budget can pause them.
     task_ids: list[int] = field(default_factory=list)
+    #: Research rounds (:mod:`research`): what ONE goal turn may spend, enforced at the gate
+    #: so a turn cannot burn the whole budget at once. One simulation per round is the
+    #: one-experiment rule; two correlation jobs are one candidate's self and prod reads.
+    #: ``0`` means no per-round ceiling. Applies to goal turns only, never the person's own.
+    sims_per_round: int = 1
+    corr_jobs_per_round: int = 2
+    round_spent: dict[str, int] = field(default_factory=lambda: dict.fromkeys(METERED, 0))
+    in_round: bool = False
+    round_started_at: float = 0.0
 
     def to_record(self) -> dict[str, Any]:
         """Everything, for persistence. :meth:`to_dict` is the trimmed view for the UI."""
@@ -88,7 +101,10 @@ class Goal:
     @classmethod
     def from_record(cls, data: dict[str, Any]) -> Goal:
         known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        goal = cls(**{k: v for k, v in data.items() if k in known})
+        # A round open when the process stopped is over; it must not cap the person's turns.
+        goal.in_round = False
+        return goal
 
     @property
     def running(self) -> bool:
@@ -134,7 +150,19 @@ class Goal:
             "budgets": {m: self.budget(m) for m in METERED},
             "spent": {m: self.spent.get(m, 0) for m in METERED},
             "remaining": {m: self.remaining(m) for m in METERED},
+            "perRound": {
+                "brain_simulations": self.sims_per_round,
+                "correlation_jobs": self.corr_jobs_per_round,
+            },
+            "roundSpent": {m: self.round_spent.get(m, 0) for m in METERED},
         }
+
+    def round_cap(self, meter: str) -> int:
+        if meter == "brain_simulations":
+            return self.sims_per_round
+        if meter == "correlation_jobs":
+            return self.corr_jobs_per_round
+        return 0
 
 
 class GoalBook:
@@ -146,10 +174,21 @@ class GoalBook:
 
     def __init__(self) -> None:
         self._goal: Goal | None = None
+        #: The goal that most recently finished, for ``/goal`` to report how it ended.
+        self._last: Goal | None = None
 
     @property
     def goal(self) -> Goal | None:
-        return self._goal
+        """The current goal. One that has finished is moved to :attr:`last` on first read."""
+        goal = self._goal
+        if goal is not None and goal.status in ENDED:
+            self._last, self._goal = goal, None
+            return None
+        return goal
+
+    @property
+    def last(self) -> Goal | None:
+        return self._last
 
     def set(self, goal: Goal) -> Goal:
         self._goal = goal
@@ -167,16 +206,32 @@ class GoalBook:
             log.info("agent.goal.cleared", reason=reason)
         self._goal = None
 
+    # -- research rounds -------------------------------------------------
+
+    def begin_round(self) -> None:
+        """A goal turn is starting: open a fresh per-round meter."""
+        goal = self._goal
+        if goal is None:
+            return
+        goal.in_round = True
+        goal.round_spent = dict.fromkeys(METERED, 0)
+        goal.round_started_at = time.time()
+
+    def end_round(self) -> None:
+        if self._goal is not None:
+            self._goal.in_round = False
+
     # -- the gate's interface --------------------------------------------
 
     def refusal(self, spends: dict[str, int]) -> str | None:
         """Why this action may not run, or ``None``. Called before every execution.
 
         With no goal there is no budget, so nothing is refused: a goal adds a ceiling, it
-        never becomes the only way to act.
+        never becomes the only way to act. The same holds once the goal has ended (met,
+        spent, stopped) or is paused: its leftover budget must not cap the person's next work.
         """
         goal = self._goal
-        if goal is None:
+        if goal is None or not goal.running:
             return None
         for meter in METERED:
             left = goal.remaining(meter)
@@ -187,15 +242,30 @@ class GoalBook:
                     f"The goal's budget is spent: this needs {want} {pretty} and {left} "
                     f"of {goal.budget(meter)} remain. Raise the budget or set a new goal."
                 )
+        if goal.in_round:
+            for meter in METERED:
+                cap = goal.round_cap(meter)
+                want = int(spends.get(meter, 0))
+                used = goal.round_spent.get(meter, 0)
+                if cap > 0 and want and used + want > cap:
+                    pretty = meter.replace("_", " ")
+                    return (
+                        f"This research round may spend at most {cap} {pretty} and {used} "
+                        f"are used; this needs {want}. One experiment per round keeps the "
+                        "result attributable: record the round (POST /api/research/rounds) "
+                        "and take the next step next round."
+                    )
         return None
 
     def record(self, spends: dict[str, int]) -> None:
         """Count what an execution actually used, and retire the goal when a meter runs out."""
         goal = self._goal
-        if goal is None:
+        if goal is None or not goal.running:
             return
         for meter in METERED:
             goal.spent[meter] = goal.spent.get(meter, 0) + int(spends.get(meter, 0))
+            if goal.in_round:
+                goal.round_spent[meter] = goal.round_spent.get(meter, 0) + int(spends.get(meter, 0))
         for meter in METERED:
             left = goal.remaining(meter)
             if left is not None and left <= 0 and goal.running:

@@ -351,5 +351,27 @@ class LLMService:
         added = self.registry.merge_discovered(names, provider)
         return {"keyId": key_id, "ok": True, "models": len(names), "newModels": added}
 
+    async def provider_models(self, provider: str) -> list[str] | None:
+        """The model ids a provider serves to the first enabled key for it.
+
+        None when there is no such key or the listing fails, so a caller can tell "not
+        offered" (a list without it) from "could not ask" (None). Listing is not billed
+        against generation quotas.
+        """
+        rows = [r for r in await self.keys.list_keys() if r.enabled and r.provider == provider]
+        if not rows:
+            return None
+        secret = await self.keys.secret(rows[0].id)
+        client = self._client(rows[0].id, secret, provider)
+        try:
+            if provider == "google":
+                names = [m.name or "" async for m in await client.aio.models.list()]
+            else:
+                names = await client.models()
+        except Exception:  # the caller reports "could not ask"
+            log.warning("llm.provider_models_failed", provider=provider, exc_info=True)
+            return None
+        return [n.removeprefix("models/") for n in names]
+
     async def check_all(self) -> list[dict[str, Any]]:
         return [await self.check_key(row.id) for row in await self.keys.list_keys()]

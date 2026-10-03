@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 from collections.abc import AsyncIterator
 from typing import Annotated, Any, Literal
@@ -11,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..agent.goals import Goal
-from ..agent.loop import AgentService
+from ..agent.loop import MODEL, AgentService
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -92,6 +93,10 @@ class GoalRequest(BaseModel):
     brain_simulations: int = Field(default=0, ge=0, le=5_000)
     llm_requests: int = Field(default=0, ge=0, le=5_000)
     correlation_jobs: int = Field(default=0, ge=0, le=500)
+    #: Research rounds: what one goal turn may spend. 1 simulation is one experiment per
+    #: round; 2 correlation jobs are one candidate's self and prod reads. 0 removes the cap.
+    sims_per_round: int = Field(default=1, ge=0, le=100)
+    corr_jobs_per_round: int = Field(default=2, ge=0, le=50)
     #: The conversation to carry on in, and the page the person is on.
     thread_id: int | None = None
     context: PageContext = Field(default_factory=PageContext)
@@ -99,8 +104,10 @@ class GoalRequest(BaseModel):
 
 @router.get("/goal")
 async def get_goal(request: Request) -> dict[str, Any]:
-    goal = (await _service(request)).goals.goal
-    return {"goal": goal.to_dict() if goal else None}
+    """The current goal, and the last one that finished (a finished goal clears itself)."""
+    goals = (await _service(request)).goals
+    goal, last = goals.goal, goals.last
+    return {"goal": goal.to_dict() if goal else None, "last": last.to_dict() if last else None}
 
 
 def _publish(service: AgentService, kind: str, text: str) -> dict[str, Any]:
@@ -125,6 +132,8 @@ async def set_goal(payload: GoalRequest, request: Request) -> dict[str, Any]:
             brain_simulations=payload.brain_simulations,
             llm_requests=payload.llm_requests,
             correlation_jobs=payload.correlation_jobs,
+            sims_per_round=payload.sims_per_round,
+            corr_jobs_per_round=payload.corr_jobs_per_round,
             thread_id=payload.thread_id,
             context=_context(payload.context),
             baseline_used=int(await service.state.tracker.used_today()),
@@ -258,6 +267,137 @@ async def set_permissions(payload: PermissionsRequest, request: Request) -> dict
     service = await _service(request)
     service.permissions.set(payload.mode)
     return {"mode": service.permissions.mode, "alwaysYours": _always_yours(service)}
+
+
+@router.get("/watches")
+async def watches(request: Request) -> list[dict[str, Any]]:
+    """Work Vision is monitoring, across conversations (/watches)."""
+    return (await _service(request)).watcher.active()
+
+
+@router.delete("/watches/{watch_id}")
+async def cancel_watch(watch_id: int, request: Request) -> dict[str, Any]:
+    service = await _service(request)
+    if not service.watcher.cancel(watch_id):
+        raise HTTPException(
+            status_code=404, detail={"code": "no_watch", "message": f"No watch #{watch_id}."}
+        )
+    return {"cancelled": watch_id, "active": service.watcher.active()}
+
+
+@router.get("/sessions")
+async def sessions(request: Request) -> list[dict[str, Any]]:
+    """Vision's conversations, newest first, marking the one a goal runs in (/sessions)."""
+    return (await _service(request)).sessions()
+
+
+@router.get("/sessions/{thread_id}")
+async def session(thread_id: int, request: Request) -> dict[str, Any]:
+    """One conversation rebuilt as panel entries, to resume it (/resume)."""
+    entries = (await _service(request)).history(thread_id)
+    if entries is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "no_session", "message": f"No session #{thread_id}."},
+        )
+    return {"id": thread_id, "entries": entries}
+
+
+class ModelRequest(BaseModel):
+    """A roster model id, or a provider plus a slug pasted from its catalog. ``model`` null
+    goes back to the default, which falls back to whatever the Keys can reach."""
+
+    model: str | None = Field(default=None, max_length=200)
+    provider: str | None = Field(default=None, max_length=40)
+
+
+async def _model_view(service: AgentService, request: Request) -> dict[str, Any]:
+    llm = request.app.state.harness.llm
+    keyed = {row.provider for row in await llm.keys.list_keys() if row.enabled}
+    effective: dict[str, Any] | None = None
+    try:
+        info = await llm.resolve(service.model_choice.model or MODEL, deep=True)
+        effective = {"id": info.id, "label": info.label, "provider": info.provider}
+    except Exception:  # noqa: BLE001 - no keys yet: the view says so instead of failing
+        effective = None
+    options = [m.to_dict() for m in llm.registry.all("text") if m.provider in keyed]
+    from ..llm.providers import get as provider_spec
+
+    providers = []
+    for pid in sorted(keyed):
+        spec = provider_spec(pid)
+        providers.append({"id": pid, "label": spec.label, "paid": spec.paid})
+    return {
+        "model": service.model_choice.model,
+        "default": MODEL,
+        "effective": effective,
+        "options": options,
+        "providers": providers,
+    }
+
+
+@router.get("/model")
+async def get_model(request: Request) -> dict[str, Any]:
+    service = await _service(request)
+    return await _model_view(service, request)
+
+
+@router.put("/model")
+async def set_model(payload: ModelRequest, request: Request) -> dict[str, Any]:
+    """Set by the person in the UI. Outside Vision's catalog, so it cannot switch its own model."""
+    service = await _service(request)
+    llm = request.app.state.harness.llm
+    model = (payload.model or "").strip() or None
+    if model is None:
+        service.model_choice.set(None)
+        return await _model_view(service, request)
+    known = llm.registry.get(model)
+    provider = (payload.provider or (known.provider if known else "")).strip()
+    if not provider:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "provider_required",
+                "message": "Say which provider serves this model.",
+            },
+        )
+    keyed = {row.provider for row in await llm.keys.list_keys() if row.enabled}
+    if provider not in keyed:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "no_key",
+                "message": f"Add an enabled {provider} key first; Vision can only use "
+                "a model a key answers for.",
+            },
+        )
+    if known is None or known.discovered or known.provider != provider:
+        offered = await llm.provider_models(provider)
+        if offered is None:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "unverified",
+                    "message": f"Could not read {provider}'s model list to check "
+                    f"{model!r}. Try again.",
+                },
+            )
+        if model not in offered:
+            tail = model.split("/")[-1].lower()
+            near = [m for m in offered if tail in m.lower()]
+            near += difflib.get_close_matches(model, offered, n=3, cutoff=0.6)
+            near = list(dict.fromkeys(near))[:5]
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "not_offered",
+                    "message": f"{provider} does not serve {model!r}."
+                    + (f" Did you mean: {', '.join(near)}?" if near else ""),
+                },
+            )
+        service.model_choice.add_custom(model, provider)
+    service.model_choice.set(model)
+    return await _model_view(service, request)
 
 
 def _always_yours(service: AgentService) -> list[dict[str, str]]:

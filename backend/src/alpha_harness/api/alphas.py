@@ -17,6 +17,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field, RootModel
 from sqlalchemy import delete, func, select
 
+from ..brain.corrqueue import correlation_readings
 from ..brain.errors import BrainError
 from ..db.models import BrainCache, SimulationRecord, Study, Trial, TrialState, utcnow
 from ..labs.fastexpr import ParseError, data_fields, operator_count, operator_names, parse
@@ -505,12 +506,14 @@ async def check_alpha(alpha_id: str, state: State) -> BrainPayload:
     Changes nothing on the platform. It does update the local copy, so an alpha that has
     just resolved appears on the submit screen without waiting for the next backfill.
     """
-    body = await state.endpoints.check_alpha(alpha_id)
+    body = await state.correlations.run("check", alpha_id)
     checks = ((body.get("is") or {}).get("checks")) or []
     if checks:
         await state.alphas.save_checks(alpha_id, checks)
     await _forget(state, f"alpha:{alpha_id}")
-    return BrainPayload(body)
+    # BRAIN's own JSON is passed through untouched; the readings sit beside it and say which
+    # correlation checks were actually measured and which merely timed out.
+    return BrainPayload(body | {"correlationReadings": correlation_readings(body)})
 
 
 @router.get("/{alpha_id}/correlations/{kind}")
@@ -533,7 +536,7 @@ async def correlations(
     body, fetched = await _cached(
         state,
         key,
-        lambda: state.endpoints.correlations(alpha_id, kind),
+        lambda: state.correlations.run(kind, alpha_id),
         refresh=refresh,
     )
     return BrainPayload(body | {"cached": True, "fetchedAt": _iso(fetched)})

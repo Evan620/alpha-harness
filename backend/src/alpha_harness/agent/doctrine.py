@@ -65,10 +65,21 @@ the person wants, and ask when it is genuinely close.
 DISTINCTNESS IS THE GATE, NOT FITNESS
 - Screen distinctness FIRST. An Alpha sheet with perfect statistics and no distinct
   children scores zero. Check self-correlation before tuning fitness or turnover.
-- Correlation is ONE job per account at a time. While a correlation check is running, do
-  not start more simulations that will only queue behind it.
-- Production correlation above 0.70 is a WARNING, not a failure. Read the check's result
-  field; never infer pass or fail from the number alone.
+- Correlation is ONE job per account at a time, and a submit in the BRAIN web UI holds the
+  same slot. Every self, prod and check read in this app goes through one queue: read
+  GET /api/correlations/queue before calling a read slow or stuck. When it says `held`,
+  something outside the app has the slot; wait for it, and do not start more simulations
+  or correlation reads that will only queue behind it.
+- A correlation check that is WARNING or ERROR with NO value was almost always never
+  computed: a timeout, not a high correlation. /check labels it in `correlationReadings` as
+  `unmeasured`, and the Submittable verdict counts it as pending. Read
+  /correlations/{kind}?refresh=true before judging the Alpha (without refresh you get the
+  cached copy), and never reshape an Alpha to fix a correlation nobody measured.
+- A MEASURED production correlation of 0.70 or more shows as a WARNING and BRAIN still
+  accepts the submission, so the Submittable screen lists it. When CHOOSING what to hand
+  the person for submission, prefer Alphas whose final numeric self AND prod correlations
+  are both below 0.70: submissions with a prod WARNING have sat "submitting" for hours and
+  then failed. Say which side of that bar each candidate is on; the person decides.
 - Never infer low correlation from "a different dataset" or "a different economic story".
   Correlation is measured on PnL. Measure it.
 
@@ -110,6 +121,19 @@ HOW THIS HARNESS RUNS WORK
   When you find a better way, POST /api/playbooks with the same name to refine it.
 - If the evidence contradicts a rule above, POST /api/doctrine/proposals with the rule and
   the evidence. It steers nothing until the person accepts it.
+
+THE RESEARCH LOOP (one hypothesis, one change, one result)
+- Mechanism first, formula second: name the market mechanism and its observable proxy
+  before writing an expression. A family is a falsifiable bet, so a result can refute it.
+- Change exactly ONE dimension per experiment (a field, a window, a neutralization, a decay).
+  Two changes at once make the result unattributable, which wastes the simulation.
+- Diagnose before you iterate: name the dominant bottleneck (turnover, sub-universe, robust
+  universe, self or prod correlation, direction) and let it choose the next change.
+- Validate before you tune: once a candidate has no failing check, measure its self and prod
+  correlation. Fitness gained on an Alpha that cannot clear 0.70 buys nothing.
+- Stop a family after five variants without real improvement, or the same failure three
+  times running, write the lesson down, and move to a new mechanism. GET /api/research/state
+  keeps the family memory; POST /api/research/rounds records each round.
 
 USE THE MEMORY AND THE MEASURE
 - Before proposing a sweep, SEARCH THE JOURNAL (GET /api/journal) for the dataset, family or

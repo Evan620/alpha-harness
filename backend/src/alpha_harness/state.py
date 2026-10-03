@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from .account import AuthService, PlatformMetadata
 from .brain.client import BrainClient
+from .brain.corrqueue import CorrelationQueue
 from .brain.endpoints import BrainEndpoints
 from .brain.errors import BrainTransportError
 from .catalog import search
@@ -79,6 +80,16 @@ class AppState:
             default_attempts=self.settings.request_attempts,
         )
         self.endpoints = BrainEndpoints(self.client)
+        #: BRAIN runs one correlation job per account; every self, prod, Power Pool and
+        #: check read goes through this so they never contend with each other.
+        self.correlations = CorrelationQueue(
+            self.client,
+            hub=self.hub,
+            # The same bound a direct poll had: a request still answers within it, queue
+            # time included, and the job keeps its place for the next ask.
+            job_timeout=self.settings.poll_timeout_seconds,
+            max_wait=self.settings.poll_timeout_seconds,
+        )
         self.metadata = PlatformMetadata(self.db, self.endpoints)
         self.auth = AuthService(self.db, self.sealer, self.endpoints, metadata=self.metadata)
 
@@ -287,6 +298,7 @@ class AppState:
         await self.tracker.stop()
         # Detached work reads and writes the stores closed below, so it goes first.
         await cancel_background()
+        await self.correlations.stop()
         await self.backfill.stop()
         await self.sync.shutdown()
         await self.client.aclose()

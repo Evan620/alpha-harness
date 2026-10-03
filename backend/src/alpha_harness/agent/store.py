@@ -24,10 +24,18 @@ GOAL_ROW = 1
 RESTART_REASON = "The backend restarted while this goal was running. /goal resume to carry on."
 
 
-async def load_threads(db: Database) -> dict[int, list[dict[str, Any]]]:
+async def load_threads(db: Database) -> dict[int, tuple[list[dict[str, Any]], float]]:
+    """Every saved conversation with when it last changed, so /sessions orders them by real
+    activity rather than by when the backend happened to start."""
     async with db.session() as session:
         rows = (await session.execute(select(AgentThread))).scalars().all()
-        return {row.id: list(row.messages or []) for row in rows}
+        return {
+            row.id: (
+                list(row.messages or []),
+                row.updated_at.timestamp() if row.updated_at else 0.0,
+            )
+            for row in rows
+        }
 
 
 async def save_thread(db: Database, thread_id: int, messages: list[dict[str, Any]]) -> None:

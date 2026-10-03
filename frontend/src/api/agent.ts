@@ -91,6 +91,85 @@ export interface Permissions {
   alwaysYours: { action: string; summary: string; tier: string }[]
 }
 
+export interface VisionModelOption {
+  id: string
+  label: string
+  provider: string
+  summary: string
+  rpm: number
+  rpd: number
+  recommended: boolean
+  discovered: boolean
+}
+
+export interface ResearchFamily {
+  name: string
+  status: string
+  stopReason: string
+  mechanism: string
+  proxy: string
+  experiments: number
+  bestAlphaId: string
+  bestFitness: number | null
+  noImproveStreak: number
+  lastBottleneck: string
+  stopDue: string | null
+  lessons: string[]
+}
+
+export interface ResearchRound {
+  number: number
+  mode: string
+  family: string
+  decision: string
+  next_action: string
+  reason: string
+  alpha_id: string
+  changed_dimension: string
+  bottleneck: string
+  lesson: string
+  at: number
+}
+
+/** Vision's research memory: one hypothesis, one change, one result per goal round. */
+export interface ResearchState {
+  loop: 'search' | 'improvement'
+  required: string[]
+  families: ResearchFamily[]
+  closedFamilies: { name: string; status: string; reason: string }[]
+  recentRounds: ResearchRound[]
+}
+
+/** Work Vision chose to monitor; it is woken in that conversation when the work ends. */
+export interface VisionWatch {
+  id: number
+  thread_id: number
+  kind: 'task' | 'simulations'
+  task_id: number | null
+  then: string
+  what: string
+  minutesLeft: number
+}
+
+/** One saved Vision conversation, for /sessions. */
+export interface VisionSession {
+  id: number
+  title: string
+  updated: number
+  turns: number
+  goal: { objective: string; status: string } | null
+  running: boolean
+}
+
+/** Which model Vision thinks with. Only the person sets it, with /model. */
+export interface VisionModel {
+  model: string | null
+  default: string
+  effective: { id: string; label: string; provider: string } | null
+  options: VisionModelOption[]
+  providers: { id: string; label: string; paid: boolean }[]
+}
+
 export interface GoalVerdict {
   turn: number
   verdict: string
@@ -178,7 +257,7 @@ export const agent = {
   playbooks: () => http.get<LearnedPlaybook[]>('/api/playbooks'),
   archivePlaybook: (id: number) =>
     http.post<{ id: number; name: string }>(`/api/agent/playbooks/${id}/archive`),
-  goal: () => http.get<{ goal: Goal | null }>('/api/agent/goal'),
+  goal: () => http.get<{ goal: Goal | null; last?: Goal | null }>('/api/agent/goal'),
   setGoal: (body: {
     objective: string
     done_when: string
@@ -194,6 +273,15 @@ export const agent = {
   permissions: () => http.get<Permissions>('/api/agent/permissions'),
   setPermissions: (mode: PermissionMode) =>
     http.put<Permissions>('/api/agent/permissions', { mode }),
+  research: () => http.get<ResearchState>('/api/research/state'),
+  sessions: () => http.get<VisionSession[]>('/api/agent/sessions'),
+  watches: () => http.get<VisionWatch[]>('/api/agent/watches'),
+  cancelWatch: (id: number) => http.del<{ cancelled: number }>(`/api/agent/watches/${id}`),
+  session: (id: number) =>
+    http.get<{ id: number; entries: unknown[] }>(`/api/agent/sessions/${id}`),
+  model: () => http.get<VisionModel>('/api/agent/model'),
+  setModel: (body: { model: string | null; provider?: string | null }) =>
+    http.put<VisionModel>('/api/agent/model', body),
   turn: (
     body: { text: string; thread_id: number | null; context: PageContext },
     onEvent: (e: AgentEvent) => void,

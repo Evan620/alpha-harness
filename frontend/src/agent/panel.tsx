@@ -26,15 +26,20 @@ import {
   type BusEvent,
   type Goal,
   type PageContext,
+  type VisionModel,
+  type VisionSession,
 } from '@/api/agent'
+import { simulations } from '@/api/core'
 import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { NAV } from '@/shell/nav'
 import { Badge, Button, Textarea } from '@/ui/kit'
 import { budgetLine, GOAL_KEY, GoalChip, statusOf } from './goal'
 import { Markdown } from './markdown'
+import { ModelChip } from './model'
 import { ModeChip, PermissionsCard } from './permissions'
 import { useVision } from './store'
+import { WatchChip } from './watch'
 
 type Part =
   | { kind: 'text'; text: string }
@@ -60,6 +65,7 @@ type Entry =
   | { role: 'user'; text: string }
   | { role: 'agent'; parts: Part[]; live: boolean }
   | { role: 'permissions' }
+  | { role: 'output'; text: string }
   | { role: 'loop'; kind: LoopKind; text: string; until?: number }
 
 type LoopKind = 'start' | 'continue' | 'wait' | 'await_approval' | 'stop' | 'status'
@@ -77,6 +83,15 @@ const COMMANDS = [
   },
   { name: '/playbooks', hint: 'Procedures Vision learned. archive N to retire one', args: true },
   { name: '/permissions', hint: 'Ask first or Auto: whether Vision asks before acting' },
+  {
+    name: '/model',
+    hint: '<id or slug> [provider] to switch, auto to reset. Alone lists',
+    args: true,
+  },
+  { name: '/research', hint: 'Research memory: loop, families, rounds, what is running' },
+  { name: '/sessions', hint: 'Pick a saved conversation to switch to' },
+  { name: '/watches', hint: 'Work Vision is monitoring. cancel N to stop one', args: true },
+  { name: '/resume', hint: '<id> to reopen a session, alone opens the picker', args: true },
   { name: '/new', hint: 'Start a new conversation' },
   { name: '/clear', hint: 'Clear this conversation' },
 ] as const
@@ -151,6 +166,9 @@ export function AgentPanel() {
   const [entries, setEntries] = useState<Entry[]>([])
   const [text, setText] = useState('')
   const [pick, setPick] = useState(0)
+  //: The /sessions picker: open while non-null; the input filters it.
+  const [sessionList, setSessionList] = useState<VisionSession[] | null>(null)
+  const [sessionPick, setSessionPick] = useState(0)
   const [busy, setBusy] = useState(false)
   const [, setThreadIdState] = useState<number | null>(null)
   const threadRef = useRef<number | null>(null)
@@ -332,9 +350,12 @@ export function AgentPanel() {
     const res = await agent.goal().catch(() => null)
     const g = res?.goal
     if (!g) {
+      const last = res?.last
       pushLoop(
         'status',
-        'No goal set. Start one with /goal <condition>, e.g. /goal find 2 EUR/D1 alphas that pass every check turns=10 sims=500',
+        last
+          ? `No goal running. The last one ended ${statusOf(last.status).label.toLowerCase()} after ${last.turns} of ${last.maxTurns} turns: ${last.objective}. ${last.stoppedReason} Start another with /goal <condition>.`
+          : 'No goal set. Start one with /goal <condition>, e.g. /goal find 2 EUR/D1 alphas that pass every check turns=10 sims=500',
       )
       return
     }
@@ -459,6 +480,139 @@ export function AgentPanel() {
     setEntries((prev) => [...prev.filter((e) => e.role !== 'permissions'), { role: 'permissions' }])
   }
 
+  /** Terminal-style output: plain monospace text in the transcript, no card. */
+  const print = (text: string) => setEntries((prev) => [...prev, { role: 'output', text }])
+
+  /** `/model [id|slug] [provider]` or `/model auto`. Alone, prints the model and choices. */
+  const modelCommand = async (arg: string) => {
+    const [first, provider] = arg.trim().split(/\s+/)
+    const line = (m: VisionModel) =>
+      `Model: ${m.effective?.label ?? 'none'} (${m.effective?.id ?? '-'}, ${m.effective?.provider ?? '-'})${m.model ? '' : ', automatic'}`
+    try {
+      if (first) {
+        const next = await agent.setModel(
+          first.toLowerCase() === 'auto'
+            ? { model: null }
+            : { model: first, provider: provider ?? null },
+        )
+        queryClient.setQueryData(['vision', 'model'], next)
+        print(line(next))
+        return
+      }
+      const m = await agent.model()
+      const width = Math.max(8, ...m.options.map((o) => o.id.length))
+      print(
+        [
+          line(m),
+          '/model <id> [provider] to switch, /model auto to reset. Any slug a provider serves works.',
+          ...m.options.map(
+            (o) =>
+              `${o.id === m.effective?.id ? '*' : ' '} ${o.id.padEnd(width)}  ${o.provider.padEnd(7)} ${o.summary}`,
+          ),
+        ].join('\n'),
+      )
+    } catch (e) {
+      print(`Model not changed: ${errorMessage(e)}`)
+    }
+  }
+
+  /** `/research`: the research memory, as text. */
+  const researchCommand = async () => {
+    try {
+      const [r, active] = await Promise.all([
+        agent.research(),
+        simulations.active().catch(() => []),
+      ])
+      const running = active.length
+        ? `${active.length} simulating now (Simulation Matrix, /matrix).`
+        : 'Nothing simulating.'
+      const lines = [`Research loop: ${r.loop.toUpperCase()}. ${running}`]
+      if (r.required.length) lines.push('Required first:', ...r.required.map((x) => `  - ${x}`))
+      if (r.families.length) {
+        lines.push('Families:')
+        for (const f of r.families)
+          lines.push(
+            `  ${f.name}  [${f.status}]  ${f.experiments} exp, best ${f.bestAlphaId || '-'} fitness ${f.bestFitness ?? '-'}, ${f.noImproveStreak} without gain${f.lastBottleneck ? `, ${f.lastBottleneck}` : ''}`,
+            ...(f.mechanism ? [`    ${f.mechanism}`] : []),
+          )
+      } else lines.push('No families yet. Set a /goal and Vision starts with a hypothesis.')
+      if (r.closedFamilies.length)
+        lines.push(`Closed: ${r.closedFamilies.map((f) => f.name).join(', ')}`)
+      if (r.recentRounds.length)
+        lines.push(
+          'Recent rounds:',
+          ...r.recentRounds.map(
+            (x) =>
+              `  #${x.number} ${x.mode.replaceAll('_', ' ')}${x.alpha_id ? ` ${x.alpha_id}` : ''}${x.changed_dimension ? ` (${x.changed_dimension})` : ''} -> ${x.next_action || x.decision}`,
+          ),
+        )
+      print(lines.join('\n'))
+    } catch (e) {
+      print(`Research memory unavailable: ${errorMessage(e)}`)
+    }
+  }
+
+  /** `/watches [cancel N]`: work Vision is monitoring, as text. */
+  const watchesCommand = async (arg: string) => {
+    const m = /^cancel\s+#?(\d+)$/i.exec(arg.trim())
+    try {
+      if (m) {
+        await agent.cancelWatch(Number(m[1]))
+        return print(`Watch #${m[1]} cancelled.`)
+      }
+      const rows = await agent.watches()
+      if (!rows.length)
+        return print('No watches. Vision sets one when it starts work worth waiting on.')
+      print(
+        [
+          'Watches. /watches cancel <id> to stop one.',
+          ...rows.map(
+            (w) =>
+              `  #${w.id}  session #${w.thread_id}  ${w.what}, up to ${w.minutesLeft}m more. Then: ${w.then}`,
+          ),
+        ].join('\n'),
+      )
+    } catch (e) {
+      print(`Watches unavailable: ${errorMessage(e)}`)
+    }
+  }
+
+  /** `/sessions`: a picker over saved conversations, newest first, like Claude Code's. */
+  const sessionsCommand = async () => {
+    try {
+      const rows = await agent.sessions()
+      if (!rows.length) return print('No saved sessions yet.')
+      setSessionList(rows)
+      // Start on the newest session you are NOT in: switching is the point of the picker.
+      const other = rows.findIndex((r) => r.id !== threadRef.current)
+      setSessionPick(Math.max(other, 0))
+      setText('')
+      requestAnimationFrame(() =>
+        document.querySelector<HTMLTextAreaElement>('aside[aria-label=Vision] textarea')?.focus(),
+      )
+    } catch (e) {
+      print(`Sessions unavailable: ${errorMessage(e)}`)
+    }
+  }
+
+  /** `/resume <id>`: reopen a saved session; the next message carries on in it. */
+  const resumeCommand = async (arg: string) => {
+    if (!arg.trim()) return void sessionsCommand()
+    const id = Number(arg.trim().replace(/^#/, ''))
+    if (!Number.isInteger(id) || id <= 0) return print('Usage: /resume <id>, or /sessions to pick')
+    if (id === threadRef.current) return print(`You are already in session #${id}.`)
+    try {
+      const session = await agent.session(id)
+      setThreadId(session.id)
+      setEntries([
+        ...(session.entries as Entry[]),
+        { role: 'output', text: `Resumed session #${session.id}. Your next message continues it.` },
+      ])
+    } catch (e) {
+      print(`Could not resume #${id}: ${errorMessage(e)}`)
+    }
+  }
+
   const send = (message: string) => {
     const trimmed = message.trim()
     if (!trimmed) return
@@ -478,6 +632,15 @@ export function AgentPanel() {
     setText('')
     // Slash commands are handled here and never reach the model.
     if (trimmed === '/permissions') return showPermissions()
+    const command = /^\/(model|resume|watches)(?:\s+([\s\S]*))?$/i.exec(trimmed)
+    if (command) {
+      const which = (command[1] ?? '').toLowerCase()
+      const run =
+        which === 'model' ? modelCommand : which === 'watches' ? watchesCommand : resumeCommand
+      return void run(command[2] ?? '')
+    }
+    if (trimmed === '/research') return void researchCommand()
+    if (trimmed === '/sessions') return void sessionsCommand()
     if (trimmed === '/new' || trimmed === '/clear') {
       setEntries([])
       setThreadId(null)
@@ -532,6 +695,24 @@ export function AgentPanel() {
   const slash = /^\/\S*$/.test(text) ? text.toLowerCase() : null
   const menu = slash ? COMMANDS.filter((c) => c.name.startsWith(slash)) : []
   const pickIndex = Math.min(pick, Math.max(menu.length - 1, 0))
+  const sessionQuery = sessionList ? text.trim().toLowerCase().replace(/^#/, '') : ''
+  const sessionRows = (sessionList ?? []).filter(
+    (r) =>
+      !sessionQuery ||
+      String(r.id).startsWith(sessionQuery) ||
+      r.title.toLowerCase().includes(sessionQuery),
+  )
+  const sessionIndex = Math.min(sessionPick, Math.max(sessionRows.length - 1, 0))
+  const closeSessions = () => {
+    setSessionList(null)
+    setText('')
+  }
+  const openSession = (row: VisionSession | undefined) => {
+    if (!row) return
+    setSessionList(null)
+    setText('')
+    void resumeCommand(String(row.id))
+  }
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -563,7 +744,9 @@ export function AgentPanel() {
           <div className="text-body font-medium text-ink">Vision</div>
           <div className="truncate text-[11px] text-ink-subtle">Sees {pathname}</div>
         </div>
+        <WatchChip />
         <GoalChip onClick={() => void showGoal()} />
+        <ModelChip onClick={() => void modelCommand('')} />
         <ModeChip onClick={showPermissions} />
         <Button
           variant="ghost"
@@ -630,6 +813,13 @@ export function AgentPanel() {
                   key={i}
                   onDone={() => setEntries((prev) => prev.filter((e) => e.role !== 'permissions'))}
                 />
+              ) : entry.role === 'output' ? (
+                <pre
+                  key={i}
+                  className="overflow-x-auto font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-ink-muted"
+                >
+                  {entry.text}
+                </pre>
               ) : entry.role === 'user' ? (
                 <div
                   key={i}
@@ -667,6 +857,54 @@ export function AgentPanel() {
         onSubmit={onSubmit}
         className="relative flex items-end gap-2 border-t border-hairline p-3"
       >
+        {sessionList && (
+          <div
+            role="listbox"
+            aria-label="Sessions"
+            className="absolute right-3 bottom-full left-3 mb-1 max-h-80 overflow-auto rounded-sm border border-hairline-strong bg-surface-2 shadow-lg"
+          >
+            <div className="px-3 pt-1.5 pb-1 text-[11px] text-ink-subtle">
+              Sessions. Type to filter, Enter to open, Esc to close.
+            </div>
+            {sessionRows.length === 0 && (
+              <div className="px-3 py-1.5 text-body-compact text-ink-subtle">No match.</div>
+            )}
+            {sessionRows.map((r, i) => (
+              <button
+                key={r.id}
+                type="button"
+                role="option"
+                aria-selected={i === sessionIndex}
+                onMouseEnter={() => setSessionPick(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  openSession(r)
+                }}
+                className={cn(
+                  'flex w-full items-baseline gap-2 px-3 py-1 text-left font-mono text-[11.5px]',
+                  i === sessionIndex ? 'bg-surface-3' : 'hover:bg-surface-3',
+                )}
+              >
+                <span className="w-3 shrink-0 text-ink-subtle">
+                  {r.id === threadRef.current ? '>' : ''}
+                </span>
+                <span className="w-9 shrink-0 text-ink-subtle">#{r.id}</span>
+                <span className="w-14 shrink-0 text-ink-subtle">{ago(r.updated)}</span>
+                {(r.running || r.goal) && (
+                  <span
+                    className={cn(
+                      'shrink-0',
+                      r.running ? 'text-status-warning' : 'text-ink-subtle',
+                    )}
+                  >
+                    {r.running ? 'goal running' : `goal ${r.goal?.status}`}
+                  </span>
+                )}
+                <span className="truncate text-ink">{r.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {menu.length > 0 && (
           <div
             role="listbox"
@@ -700,8 +938,29 @@ export function AgentPanel() {
           onChange={(e) => {
             setText(e.target.value)
             setPick(0)
+            setSessionPick(0)
+            if (sessionList && e.target.value.startsWith('/')) setSessionList(null)
           }}
           onKeyDown={(e) => {
+            if (sessionList) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault()
+                const n = Math.max(sessionRows.length, 1)
+                const step = e.key === 'ArrowDown' ? 1 : -1
+                setSessionPick((p) => (p + step + n) % n)
+                return
+              }
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                openSession(sessionRows[sessionIndex])
+                return
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                closeSessions()
+                return
+              }
+            }
             if (menu.length > 0) {
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault()
@@ -730,7 +989,11 @@ export function AgentPanel() {
             }
           }}
           rows={2}
-          placeholder="Ask Vision, or /goal <what to achieve>"
+          placeholder={
+            sessionList
+              ? 'Filter sessions by title or #id'
+              : 'Ask Vision, or /goal <what to achieve>'
+          }
           className="min-h-0 flex-1 resize-none py-2"
         />
         {busy || autoBusy ? (
@@ -958,6 +1221,14 @@ const LOOP_TONE: Record<LoopKind, string> = {
 }
 
 /** One line of the goal loop between turns: what the judge decided and why. */
+function ago(epochSeconds: number): string {
+  const s = Math.max(0, Date.now() / 1000 - epochSeconds)
+  if (s < 90) return 'just now'
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  if (s < 86_400) return `${Math.round(s / 3600)}h ago`
+  return `${Math.round(s / 86_400)}d ago`
+}
+
 function LoopLine({
   kind,
   text,

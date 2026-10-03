@@ -256,6 +256,9 @@ class BrainEndpoints:
     async def correlations(self, alpha_id: str, kind: str = "self") -> dict[str, Any]:
         """``self`` or ``prod`` correlation. Asynchronous.
 
+        Polls BRAIN directly. App code goes through ``AppState.correlations`` (the
+        account-wide queue) instead, because BRAIN runs one correlation job per account.
+
         ``power-pool`` is undocumented but works.
         """
         r = await self.client.poll(f"/alphas/{alpha_id}/correlations/{kind}")

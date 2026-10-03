@@ -43,16 +43,15 @@ READ_ONLY_POSTS = re.compile(
 )
 #: Local writes that spend nothing and are worth having happen freely. A memory that costs
 #: an approval prompt to write does not get written, and then the agent repeats itself.
-AUTO_POSTS = re.compile(r"^/api/(journal|playbooks|doctrine/proposals)$")
+AUTO_POSTS = re.compile(r"^/api/(journal|playbooks|doctrine/proposals|research/rounds)$")
 
-#: Previews that still spend something are not read-only.
-SPENDING_PREVIEWS = re.compile(r"^/api/power-pool-lab/preview$")
 SPENDS_SIMS = re.compile(
     r"(/run$|/run-all$|/tasks$|/quick$|^/api/simulations(/queue)?$|/start$|/advance$|^/api/plan/lucky$)"
 )
-SPENDS_LLM = re.compile(
-    r"^/api/(llm/(run|advise|power-pool|power-pool/queue|explain)|plan/advise|chat)$"
-)
+#: Calls that spend the person's LLM budget. Keep this to routes that exist: a stale entry
+#: silently stops metering (the idea chat answers on the spot; a Power Pool task has a
+#: model write expressions while it runs).
+SPENDS_LLM = re.compile(r"^/api/(chat|power-pool-lab/tasks)$")
 
 HUMAN_ONLY = {
     ("POST", "/api/auth/login"): "Signing in to BRAIN is yours: it can open a biometric check.",
@@ -99,7 +98,11 @@ def _name(path: str, method: str, taken: set[str]) -> str:
 
 
 #: GETs that start a BRAIN job (correlation is one job per account) or re-run checks.
-THROTTLED_GETS = re.compile(r"(/correlations(/[^/]+)?$|^/api/alphas/\{alpha_id\}/check$)")
+#: GETs that spend the account's one correlation slot. The queue's own status is a local
+#: read and is excluded: the doctrine asks Vision to look at it before calling a read slow.
+THROTTLED_GETS = re.compile(
+    r"^(?!/api/correlations/queue$).*(/correlations(/[^/]+)?$|^/api/alphas/\{alpha_id\}/check$)"
+)
 
 
 def _classify(method: str, path: str) -> tuple[Tier, frozenset[Effect]]:
@@ -107,7 +110,7 @@ def _classify(method: str, path: str) -> tuple[Tier, frozenset[Effect]]:
         return Tier.CONFIRM, frozenset({Effect.BRAIN_READ_THROTTLED, Effect.LOCAL_WRITE})
     if method == "GET":
         return Tier.AUTO, frozenset({Effect.LOCAL_READ, Effect.LOCAL_WRITE, Effect.BRAIN_READ})
-    if method == "POST" and READ_ONLY_POSTS.search(path) and not SPENDING_PREVIEWS.search(path):
+    if method == "POST" and READ_ONLY_POSTS.search(path):
         return Tier.AUTO, frozenset({Effect.LOCAL_READ, Effect.BRAIN_READ})
     if method == "POST" and AUTO_POSTS.search(path):
         return Tier.AUTO, frozenset({Effect.LOCAL_WRITE})
@@ -116,7 +119,7 @@ def _classify(method: str, path: str) -> tuple[Tier, frozenset[Effect]]:
         effects.add(Effect.LOCAL_DESTRUCTIVE)
     if SPENDS_SIMS.search(path):
         effects |= {Effect.SIMULATION_QUOTA, Effect.BACKGROUND_JOB}
-    if SPENDS_LLM.search(path) or SPENDING_PREVIEWS.search(path):
+    if SPENDS_LLM.search(path):
         effects.add(Effect.LLM_BUDGET)
     if method == "PATCH" and path.startswith("/api/alphas/"):
         effects.add(Effect.BRAIN_WRITE)

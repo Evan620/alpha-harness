@@ -32,10 +32,12 @@ from .approval import ApprovalError, ApprovalGate
 from .bus import EventBus
 from .doctrine import DOCTRINE
 from .goals import Goal, GoalBook
+from .model_choice import ModelChoice
 from .permissions import Permissions
 from .reflect import Reflector, playbooks_for
 from .registry import AgentContext, UnknownCapability
 from .runner import GoalRunner
+from .watch import Watcher
 
 log = structlog.get_logger(__name__)
 
@@ -129,6 +131,52 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "watch",
+            "description": (
+                "Monitor work you started that takes minutes (a lab task, or simulations in"
+                " flight) and be woken in this conversation when it finishes, to carry on with"
+                " the next step. Use it instead of asking the person to poll. Do not watch"
+                " instant actions, and not inside a running /goal (its loop already waits)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "integer",
+                        "description": "A lab task id: fires when it is no longer running",
+                    },
+                    "simulations": {
+                        "type": "boolean",
+                        "description": "Fires when no simulation is in flight",
+                    },
+                    "then": {
+                        "type": "string",
+                        "description": "Concretely what you will do when it finishes",
+                    },
+                    "max_wait_minutes": {
+                        "type": "integer",
+                        "description": "Fire anyway after this long (default 120, at most 720)",
+                    },
+                },
+                "required": ["then"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_watch",
+            "description": "Stop a watch you set, by its id.",
+            "parameters": {
+                "type": "object",
+                "properties": {"watch_id": {"type": "integer"}},
+                "required": ["watch_id"],
+            },
+        },
+    },
 ]
 
 
@@ -161,7 +209,11 @@ def _goal_rules(goal: Goal | None) -> str:
         " only accepts evidence: when you believe the goal is met, show the alpha ids with"
         " links and their check results, not a claim. If you need the person (an approval,"
         " a choice, a key), say exactly what and stop. The gate enforces the budget, so an"
-        " action beyond it is refused rather than trimmed."
+        " action beyond it is refused rather than trimmed.\n"
+        "Each goal turn is ONE research round: read GET /api/research/state, pick one mode,"
+        f" spend at most {goal.sims_per_round or 'any number of'} simulation(s) and"
+        f" {goal.corr_jobs_per_round or 'any number of'} correlation job(s), and end by"
+        " recording the round with POST /api/research/rounds."
     )
 
 
@@ -200,6 +252,10 @@ HOW TO WORK
 - To act: find_actions -> describe_action (for anything with a body) -> call_action.
 {_mode_rules(context.get("mode") or "ask")}
 {context.get("goalRules") or ""}
+- Work that takes minutes (a lab task you started, simulations in flight): when there is a
+  concrete next step once it finishes, call watch with what you will do, and say what you are
+  waiting for. You will be woken here when it ends. Do not ask the person to poll. Skip it for
+  instant actions and inside a running goal (its loop already waits).
 - Human-only (sign-in, keys, update, quit) and blocked actions: say where they do it themselves.
 - You never submit alphas to BRAIN.
 - Use navigate when showing them a page helps. Only use numbers that came from a tool or from
@@ -256,6 +312,10 @@ class AgentService:
             estimate=lambda cap, arguments: costs.estimate(app, cap, arguments),
         )
         self.permissions = Permissions(state.settings.data_dir / "vision.json")
+        #: The person's /model pick; None keeps the default with its key-aware fallback.
+        self.model_choice = ModelChoice(
+            state.settings.data_dir / "vision_model.json", state.llm.registry
+        )
         self.threads: dict[int, Thread] = {}
         self._ids = itertools.count(1)
         #: One turn at a time, whether the person or the goal runner started it.
@@ -266,6 +326,17 @@ class AgentService:
         #: Playbooks shown to each thread's turns, credited when its goal ends.
         self.used_playbooks: dict[int, list[int]] = {}
         state.hub.listen(self.runner.on_hub)
+        #: Work Vision chose to monitor; a watch that fires runs a follow-up turn.
+        self.watcher = Watcher(
+            state.settings.data_dir / "vision_watches.json",
+            status=self._watch_status,
+            follow_up=self._watch_follow_up,
+            announce=lambda text: self.bus.publish(
+                {"type": "loop", "kind": "status", "text": text}
+            ),
+            goal_running=self._goal_running_in,
+        )
+        state.hub.listen(self.watcher.on_hub)
         self._loaded = False
 
     async def load(self) -> None:
@@ -274,8 +345,10 @@ class AgentService:
             return
         self._loaded = True
         try:
-            for thread_id, messages in (await store.load_threads(self.state.db)).items():
-                self.threads[thread_id] = Thread(id=thread_id, messages=messages)
+            for thread_id, (messages, updated) in (await store.load_threads(self.state.db)).items():
+                self.threads[thread_id] = Thread(
+                    id=thread_id, messages=messages, updated=updated or time.time()
+                )
             goal = await store.load_goal(self.state.db)
         except Exception:
             log.warning("agent.restore_failed", exc_info=True)
@@ -284,6 +357,132 @@ class AgentService:
             self._ids = itertools.count(max(self.threads) + 1)
         if goal is not None:
             self.goals.set(goal)
+        self.watcher.start()
+
+    # -- watches -----------------------------------------------------------
+
+    def _goal_running_in(self, thread_id: int) -> bool:
+        goal = self.goals.goal
+        return goal is not None and goal.running and goal.thread_id == thread_id
+
+    async def _watch_status(self, watch: Any) -> tuple[bool, str]:
+        """Whether watched work has finished, and a one-line summary of where it stands."""
+        from . import judge
+
+        if watch.kind == "simulations":
+            sims, _tasks = await judge.work_in_flight(self)
+            return sims == 0, ("all finished" if sims == 0 else f"{sims} still in flight")
+        transport = httpx.ASGITransport(app=self.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://127.0.0.1", timeout=15.0
+        ) as client:
+            body = (await client.get("/api/lab-tasks")).json()
+        rows = body.get("tasks") if isinstance(body, dict) else body
+        task = next((t for t in rows or [] if t.get("id") == watch.task_id), None)
+        if task is None:
+            return True, "the task no longer exists"
+        status = str(task.get("status") or "")
+        summary = (
+            f"{task.get('labName') or 'lab task'} {status}, {task.get('simulated', 0)} of "
+            f"{task.get('target', 0)} simulated, best {task.get('best')}"
+            + (f", message: {task.get('message')}" if task.get("message") else "")
+        )
+        return status.lower() not in judge.LIVE_STATUSES, summary
+
+    async def _watch_follow_up(self, watch: Any, prompt: str) -> None:
+        thread = self.threads.get(watch.thread_id) or self._thread(watch.thread_id)
+        await self.run_turn(thread, prompt, auto=True)
+
+    # -- sessions (/sessions, /resume) -------------------------------------
+
+    def sessions(self) -> list[dict[str, Any]]:
+        """Every conversation with something in it, newest first, marking the goal's own."""
+        goal = self.goals.goal
+        rows: list[dict[str, Any]] = []
+        for thread in sorted(self.threads.values(), key=lambda t: -t.updated):
+            if not thread.messages:
+                continue
+            is_goal = goal is not None and goal.thread_id == thread.id
+            asked = [
+                str(m.get("content") or "")
+                for m in thread.messages
+                if m.get("role") == "user" and not str(m.get("content") or "").startswith("[")
+            ]
+            title = asked[0] if asked else _goal_line(thread.messages)
+            if is_goal and goal is not None and not asked:
+                title = goal.objective
+            rows.append(
+                {
+                    "id": thread.id,
+                    "title": " ".join(title.split())[:120] or "(empty)",
+                    "updated": thread.updated,
+                    "turns": sum(1 for m in thread.messages if m.get("role") == "user"),
+                    "goal": (
+                        {"objective": goal.objective, "status": goal.status}
+                        if is_goal and goal is not None
+                        else None
+                    ),
+                    "running": bool(
+                        is_goal and goal is not None and goal.running and self.runner.running
+                    ),
+                }
+            )
+        return rows
+
+    def history(self, thread_id: int) -> list[dict[str, Any]] | None:
+        """A saved conversation rebuilt as the panel's entries: the person's messages, the
+        loop's prompts as one-line notes, and each turn's text and tool calls with their
+        results, labelled exactly as the live stream labels them."""
+        thread = self.threads.get(thread_id)
+        if thread is None:
+            return None
+        entries: list[dict[str, Any]] = []
+        tools: dict[str, dict[str, Any]] = {}
+        agent: dict[str, Any] | None = None
+        for message in thread.messages:
+            role = message.get("role")
+            content = str(message.get("content") or "")
+            if role == "user":
+                agent = None
+                if content.startswith("["):
+                    first = content.splitlines()[0].strip("[] ")
+                    entries.append({"role": "loop", "kind": "continue", "text": first})
+                else:
+                    entries.append({"role": "user", "text": content})
+            elif role == "assistant":
+                if agent is None:
+                    agent = {"role": "agent", "parts": [], "live": False}
+                    entries.append(agent)
+                if content.strip():
+                    agent["parts"].append({"kind": "text", "text": content})
+                for call in message.get("tool_calls") or []:
+                    fn = call.get("function") or {}
+                    name = str(fn.get("name") or "")
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except ValueError:
+                        args = {}
+                    call_id = str(call.get("id") or "")
+                    part: dict[str, Any] = {
+                        "kind": "tool",
+                        "id": call_id,
+                        "tool": name,
+                        "label": self._label(name, args if isinstance(args, dict) else {}),
+                        "args": args if isinstance(args, dict) else {},
+                    }
+                    agent["parts"].append(part)
+                    tools[call_id] = part
+            elif role == "tool":
+                done = tools.get(str(message.get("tool_call_id") or ""))
+                if done is not None:
+                    try:
+                        output: Any = json.loads(content)
+                    except ValueError:
+                        output = content
+                    failed = isinstance(output, dict) and "error" in output
+                    done["status"] = "error" if failed else "executed"
+                    done["preview"] = _preview(output)
+        return entries
 
     async def persist(self, thread: Thread | None = None) -> None:
         try:
@@ -386,10 +585,16 @@ class AgentService:
         goal = self.goals.goal
         context = dict(goal.context) if goal else {}
         self.bus.publish({"type": "turn_start", "threadId": thread.id, "auto": auto})
+        round_turn = auto and goal is not None and goal.running and goal.thread_id == thread.id
+        if round_turn:
+            # A goal turn is one research round, with its own per-round spend ceiling.
+            self.goals.begin_round()
         try:
             async for event in self._locked_turn(thread, text, context):
                 self.bus.publish({**event, "threadId": thread.id, "auto": auto})
         finally:
+            if round_turn:
+                self.goals.end_round()
             self.bus.publish({"type": "turn_end", "threadId": thread.id, "auto": auto})
             await self.persist(thread)
 
@@ -417,6 +622,8 @@ class AgentService:
         await self.load()
         await self.runner.stop()
         thread = self._thread(thread_id)
+        # The person is here: watches in this conversation may follow up again.
+        self.watcher.person_spoke(thread.id)
         goal = self.goals.goal
         in_goal = goal is not None and goal.thread_id == thread.id
         if in_goal and context.get("pathname"):
@@ -581,6 +788,11 @@ class AgentService:
             return str(args.get("name") or "")
         if name in {"explain_page", "navigate"}:
             return str(args.get("route") or args.get("to") or "")
+        if name == "watch":
+            target = f"task {args.get('task_id')}" if args.get("task_id") else "simulations"
+            return f"watch {target}"
+        if name == "cancel_watch":
+            return f"cancel watch {args.get('watch_id')}"
         return ""
 
     async def _tool(
@@ -603,6 +815,19 @@ class AgentService:
                 }, step
             if name == "navigate":
                 return {"navigated": args.get("to")}, step
+            if name == "watch":
+                result = self.watcher.add(thread.id, args)
+                if "error" in result:
+                    step["status"] = "error"
+                return result, step
+            if name == "cancel_watch":
+                try:
+                    cancelled = self.watcher.cancel(int(args.get("watch_id") or 0))
+                except TypeError, ValueError:
+                    cancelled = False
+                if not cancelled:
+                    step["status"] = "error"
+                return {"cancelled": cancelled, "active": self.watcher.active(thread.id)}, step
             if name == "call_action":
                 action = str(args.get("name") or "")
                 step["action"] = action
@@ -656,7 +881,15 @@ class AgentService:
         self, thread: Thread, context: dict[str, Any], *, tools: bool = True
     ) -> AsyncIterator[tuple[str, Any]]:
         """Stream one completion: yields ("text"|"thinking", delta), then ("message", msg)."""
-        info = await self.state.llm.resolve(MODEL, deep=True)
+        # A goal turn's own model calls count against the goal's LLM budget, so a cap set for
+        # a free tier actually holds. The person's own turns are never stopped by it.
+        goal = self.goals.goal
+        metered = goal is not None and goal.running and goal.in_round
+        if metered:
+            refusal = self.goals.refusal({"llm_requests": 1})
+            if refusal is not None:
+                raise RuntimeError(refusal)
+        info = await self.state.llm.resolve(self.model_choice.model or MODEL, deep=True)
         key_id = await self.state.llm.keys.choose(info)
         secret = await self.state.llm.keys.secret(key_id)
         spec = provider_spec(info.provider)
@@ -687,6 +920,8 @@ class AgentService:
                 yield "status", f"Z.AI rate limit, waiting {wait:.0f}s"
                 await asyncio.sleep(wait)
         content, calls, tokens = state["content"], state["calls"], state["tokens"]
+        if metered:
+            self.goals.record({"llm_requests": 1})
         try:
             await self.state.llm.ledger.record(key_id, info.id, tokens)
         except Exception:
@@ -776,6 +1011,15 @@ def repair(thread: Thread) -> None:
 
 def _http_status(result: Any) -> int | None:
     return result.get("status") if isinstance(result, dict) else None
+
+
+def _goal_line(messages: list[dict[str, Any]]) -> str:
+    """The objective out of a goal prompt, for a session the loop started on its own."""
+    for message in messages:
+        for line in str(message.get("content") or "").splitlines():
+            if line.startswith("Goal: "):
+                return line.removeprefix("Goal: ")
+    return ""
 
 
 def _preview(output: Any) -> str:
